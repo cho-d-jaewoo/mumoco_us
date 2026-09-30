@@ -1,7 +1,7 @@
 """Demonstrate a task by hand-guiding the robot and save the waypoints picked with the joystick in tasks/.
 
 Flow: connect -> home -> START -> guide; X = record waypoint, A/B = open/close gripper
-      -> START -> replay? (Y/X) -> save? (Y/X) -> task name (keyboard)
+      -> START -> home -> replay? (Y/X) -> save? (Y/X) -> task name (keyboard)
 Keyboard fallback: Ctrl+C / Enter instead of START, x / o / c + Enter while guiding, y / n + Enter for questions.
 """
 
@@ -74,17 +74,17 @@ def main():
     try:
         robot.go_home()
         waypoints = record_waypoints(robot, joystick)
+        robot.go_home()
         if not waypoints:
             print("[WARNING] No waypoints were recorded.")
         else:
             print(f"[INFO] Recorded waypoints: {len(waypoints)}")
             if ask(joystick, "Replay the recorded waypoints?"):
-                robot.go_home()
                 robot.execute_task(waypoints)
                 print("[INFO] Replay finished.")
+                robot.go_home()
             if ask(joystick, "Save this task?"):
                 save_task(ask_task_name(), waypoints)
-        robot.go_home()
     finally:
         robot.close()
         if joystick:

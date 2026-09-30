@@ -11,7 +11,7 @@ import signal
 import threading
 import tkinter as tk
 import traceback
-from tkinter import messagebox
+from tkinter import font as tkfont, messagebox
 
 from joystick_input import open_joystick
 from utils import Stopped
@@ -22,11 +22,16 @@ KEY_ACTIONS = {"<Up>": "up", "<Down>": "down", "<Left>": "up", "<Right>": "down"
                "<Control-c>": "correct"}
 JOY_ACTIONS = {"UP": "up", "DOWN": "down", "Y": "yes", "X": "no", "START": "correct", "A": "open", "B": "close"}
 
-BANNERS = {"wait": ("PLEASE WAIT", "#64748b"), "moving": ("ROBOT MOVING", "#d97706"),
-           "input": ("YOUR TURN", "#2563eb"), "correction": ("CORRECTION MODE", "#059669"),
-           "error": ("ERROR", "#dc2626")}
-BG, FG, MUTED, ACCENT, ITEM, WARN = "#f8fafc", "#0f172a", "#94a3b8", "#2563eb", "#e2e8f0", "#c2410c"
-FONT = "DejaVu Sans"
+ORANGE, GREEN, BLUE, PURPLE = "#ff9900", "#a0d4a4", "#2a8fbd", "#8d5fd3"
+LIGHT_GRAY, DARK_GRAY, WHITE = "#b3b3b3", "#666666", "#ffffff"
+BG, FG, MUTED, ACCENT, WARN = WHITE, DARK_GRAY, LIGHT_GRAY, BLUE, PURPLE   # MUTED: borders, disabled items
+BANNERS = {"wait": ("PLEASE WAIT", LIGHT_GRAY, DARK_GRAY),       # mode: (text, background, text color)
+           "moving": ("ROBOT MOVING", ORANGE, DARK_GRAY),
+           "input": ("WAITING FOR INPUT", BLUE, WHITE),
+           "correction": ("CORRECTION MODE", GREEN, DARK_GRAY),
+           "error": ("ERROR", PURPLE, WHITE)}
+FONTS = ("Palatino Linotype", "Palatino", "P052", "TeX Gyre Pagella", "URW Palladio L",
+         "DejaVu Sans")                                             # first installed one is used
 VISIBLE_ITEMS = 6            # list rows shown at once (the list scrolls with the selection)
 POLL_MS = 20
 
@@ -37,6 +42,9 @@ class ExperimentUI:
         self.root.title(title)
         self.root.geometry("1000x720")
         self.root.configure(bg=BG)
+        installed = set(tkfont.families(self.root))
+        self.font = next((f for f in FONTS if f in installed), "TkDefaultFont")
+        print(f"[INFO] GUI font: {self.font}")
         self.closing = False                 # read by the worker (Robot.should_stop)
         self._inbox = queue.Queue()          # screen changes requested by the worker
         self._answers = queue.Queue()        # answers to choose() / ask_yes_no()
@@ -46,13 +54,13 @@ class ExperimentUI:
         self._worker = None
         self.joystick = open_joystick()
 
-        self.banner = tk.Label(self.root, font=(FONT, 18, "bold"), fg="white", pady=10)
+        self.banner = tk.Label(self.root, font=(self.font, 18, "bold"), pady=10)
         self.banner.pack(fill="x")
-        self.title = tk.Label(self.root, font=(FONT, 34, "bold"), bg=BG, fg=FG, pady=24)
+        self.title = tk.Label(self.root, font=(self.font, 34, "bold"), bg=BG, fg=FG, pady=24)
         self.title.pack()
-        self.subtitle = tk.Label(self.root, font=(FONT, 22), bg=BG, fg=FG, wraplength=900)
+        self.subtitle = tk.Label(self.root, font=(self.font, 22), bg=BG, fg=FG, wraplength=900)
         self.subtitle.pack()
-        self.hint = tk.Label(self.root, font=(FONT, 15), bg=BG, fg=MUTED, pady=18, wraplength=950)
+        self.hint = tk.Label(self.root, font=(self.font, 15), bg=BG, fg=FG, pady=18, wraplength=950)
         self.hint.pack(side="bottom", fill="x")
         self.body = tk.Frame(self.root, bg=BG)
         self.body.pack(expand=True)
@@ -168,8 +176,8 @@ class ExperimentUI:
             self._answers.put(value)
 
     def _show(self, mode, title, text="", hint="", actions=None):
-        banner, color = BANNERS[mode]
-        self.banner.configure(text=banner, bg=color)
+        banner, color, text_color = BANNERS[mode]
+        self.banner.configure(text=banner, bg=color, fg=text_color)
         self.title.configure(text=title)
         self.subtitle.configure(text=text, fg=FG)
         self.hint.configure(text=hint)
@@ -179,13 +187,21 @@ class ExperimentUI:
 
     def _button(self, text, action, parent=None):
         """Large clickable label; a click is the same as the keyboard/joystick action."""
-        button = tk.Label(parent or self.body, text=text, font=(FONT, 22, "bold"), bg=ITEM, fg=FG,
-                          padx=40, pady=16, cursor="hand2")
+        button = tk.Label(parent or self.body, text=text, font=(self.font, 22, "bold"), padx=40, pady=16,
+                          highlightthickness=2, cursor="hand2")
+        self._highlight(button, False)
         button.bind("<Button-1>", lambda event: self._on_action(action))
         return button
 
+    @staticmethod
+    def _highlight(widget, on, disabled=False):
+        """Selected: blue with white text. Otherwise white with a light gray border."""
+        edge = ACCENT if on else MUTED
+        widget.configure(bg=ACCENT if on else BG, fg=WHITE if on else (MUTED if disabled else FG),
+                         highlightbackground=edge, highlightcolor=edge)
+
     def _text(self, text, size=22, color=FG):
-        label = tk.Label(self.body, text=text, font=(FONT, size), bg=BG, fg=color, justify="center")
+        label = tk.Label(self.body, text=text, font=(self.font, size), bg=BG, fg=color, justify="center")
         label.pack(pady=8)
         return label
 
@@ -198,8 +214,8 @@ class ExperimentUI:
                 i = top[0] + row
                 on = i == sel[0]
                 text = options[i] + ("  (not available)" if i in disabled else "")
-                label.configure(text=("▶  " if on else "     ") + text, bg=ACCENT if on else ITEM,
-                                fg="white" if on else (MUTED if i in disabled else FG))
+                label.configure(text=("▶  " if on else "     ") + text)
+                self._highlight(label, on, i in disabled)
 
         def move(step):
             sel[0] = min(max(sel[0] + step, 0), len(options) - 1)
@@ -224,7 +240,8 @@ class ExperimentUI:
         self._show("input", title, "", hint, actions)
         rows = []
         for row in range(min(len(options), VISIBLE_ITEMS)):
-            label = tk.Label(self.body, font=(FONT, 24), anchor="w", padx=30, pady=12, width=30, cursor="hand2")
+            label = tk.Label(self.body, font=(self.font, 24), anchor="w", padx=30, pady=12, width=30,
+                             highlightthickness=2, cursor="hand2")
             label.pack(pady=5)
             label.bind("<Button-1>", lambda event, r=row: click(r))
             label.bind("<Double-Button-1>", lambda event: confirm())
@@ -238,7 +255,7 @@ class ExperimentUI:
 
         def refresh():
             for i, button in enumerate(buttons):
-                button.configure(bg=ACCENT if i == sel[0] else ITEM, fg="white" if i == sel[0] else FG)
+                self._highlight(button, i == sel[0])
 
         def toggle():
             sel[0] = 1 - sel[0]
@@ -266,7 +283,7 @@ class ExperimentUI:
         self._show("moving", "Executing Task", task_name, "", {"correct": correct})
         info = self._text("Robot is performing the task.")
         self._text("To correct the robot, press START on the joystick,\nCtrl+C, or the button below.",
-                   size=18, color=MUTED)
+                   size=18)
         self._button("Request Correction", "correct").pack(pady=24)
 
     def _correction_screen(self):
@@ -280,7 +297,7 @@ class ExperimentUI:
         self._show("correction", "Physical Correction",
                    "Press the External Activation Switch\nand guide the robot.", "", actions)
         self._text("A / O:  Open Gripper        B / C:  Close Gripper", size=20)
-        info = self._text("When you are done, release the switch and press START again.", size=18, color=MUTED)
+        info = self._text("When you are done, release the switch and press START again.", size=18)
         row = tk.Frame(self.body, bg=BG)
         row.pack(pady=20)
         for text, action in (("Open Gripper", "open"), ("Close Gripper", "close"), ("Finish", "correct")):
