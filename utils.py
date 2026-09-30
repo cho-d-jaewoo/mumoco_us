@@ -15,7 +15,7 @@ import numpy as np
 
 from config import *
 from franka import Franka
-from trajectory_utils import active_interval
+from trajectory_utils import JointSpline, active_interval
 
 
 class CorrectionRequested(Exception):
@@ -63,16 +63,27 @@ class Robot:
 
     # ---------------- motion ----------------
     def move_joint(self, q_goal):
-        """tutorial.move_joint: joint-space P-control at HZ, all joints arrive together."""
+        """tutorial.move_joint: joint-space P-control at HZ, all joints arrive together.
+
+        Also accepts the goal if the error stops shrinking for STALL_TIME while within STALL_TOL
+        (the compliant robot, a payload or contact can leave a small offset the P-control never removes).
+        """
         q_goal = np.asarray(q_goal, dtype=np.float64)
         start = time.monotonic()
+        best, best_time = np.inf, start
         while True:
             self._check_stop()
             if self.correction_requested:
                 raise CorrectionRequested
             t0 = time.monotonic()
             err = q_goal - self.franka.readState(self.conn)["q"]
-            if np.max(np.abs(err)) < JOINT_TOL:
+            e = np.max(np.abs(err))
+            if e < JOINT_TOL:
+                break
+            if e < best - 1e-3:
+                best, best_time = e, t0
+            elif e < STALL_TOL and t0 - best_time > STALL_TIME:
+                print(f"[WARNING] Target reached within {e:.3f} rad (error stopped shrinking).")
                 break
             if t0 - start > MOVE_TIMEOUT:
                 raise TimeoutError(f"Joint error still {np.round(err, 3)}")
@@ -137,14 +148,34 @@ class Robot:
         self.set_gripper(True)
         print("[INFO] Robot returned to home position.")
 
-    def execute_task(self, waypoints):
-        """Per waypoint: move the arm there (and stop), then set the gripper and wait for it."""
-        for i, wp in enumerate(waypoints, 1):
-            print(f"[INFO] Waypoint {i}/{len(waypoints)}")
-            self.move_joint(wp["joint_positions"])
-            self.set_gripper(wp["gripper_open"])
+    def follow(self, points):
+        """Move smoothly through `points` without stopping (JointSpline from the current configuration,
+        velocity feed-forward + P feedback at HZ), then settle on the last point with move_joint."""
+        spline = JointSpline([self.franka.readState(self.conn)["q"], *points], VMAX, AMAX)
+        start = time.monotonic()
+        while (t := time.monotonic() - start) < spline.duration:
+            self._check_stop()
             if self.correction_requested:
                 raise CorrectionRequested
+            q_ref, qd_ref = spline.sample(t + 1 / HZ)      # aim one command period ahead
+            qdot = qd_ref + GAIN * (q_ref - self.franka.readState(self.conn)["q"])
+            self.franka.send2robot(self.conn, np.clip(qdot, -2 * VMAX, 2 * VMAX))
+            time.sleep(max(0.0, 1 / HZ - (time.monotonic() - start - t)))
+        self.move_joint(points[-1])
+
+    def execute_task(self, waypoints):
+        """Drive through the waypoints without stopping; stop only where the gripper has to change
+        (then set it and wait for it) and at the last waypoint."""
+        segment = []
+        for i, wp in enumerate(waypoints, 1):
+            segment.append(wp["joint_positions"])
+            if wp["gripper_open"] != self.update_gripper() or i == len(waypoints):
+                print(f"[INFO] Moving to waypoint {i}/{len(waypoints)}")
+                self.follow(segment)
+                segment = []
+                self.set_gripper(wp["gripper_open"])
+                if self.correction_requested:
+                    raise CorrectionRequested
 
     # ---------------- correction (hand-guiding) mode ----------------
     @contextmanager
@@ -160,10 +191,6 @@ class Robot:
         finally:
             signal.signal(signal.SIGINT, previous)
             self.correction_requested = False
-
-    def wait_for_ctrl_c(self):
-        while not self.correction_requested:
-            time.sleep(0.05)
 
     def guide(self, record, tick):
         """Correction mode of arm_control_cjw: "c" -> operator guides the robot -> "v".

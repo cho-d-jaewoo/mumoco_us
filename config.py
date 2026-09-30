@@ -20,6 +20,9 @@ VMAX = 0.3                   # [rad/s] largest joint speed
 GAIN = 1.5                   # P gain in joint space
 JOINT_TOL = 0.01             # [rad] waypoint (and home) reached
 MOVE_TIMEOUT = 20.0          # [s]
+STALL_TIME = 1.0             # [s] error no longer shrinking for this long ...
+STALL_TOL = 0.05             # [rad] ... while within this -> accept the waypoint (compliant robot, contact)
+AMAX = 1.0                   # [rad/s^2] largest joint acceleration of the smooth task trajectory
 SETTLE_TIME = 0.3            # [s] after a stop command
 MODE_SWITCH_TIME = 0.5       # [s] after sending "v"
 GRIPPER_TIMEOUT = 5.0        # [s] gripper must report the new state (= motion finished) within this time
