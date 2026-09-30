@@ -22,7 +22,7 @@ JOINT_TOL = 0.01             # [rad] waypoint (and home) reached
 MOVE_TIMEOUT = 20.0          # [s]
 SETTLE_TIME = 0.3            # [s] after a stop command
 MODE_SWITCH_TIME = 0.5       # [s] after sending "v"
-GRIPPER_WAIT = 2.0           # [s] the gripper gives no "done" signal
+GRIPPER_TIMEOUT = 5.0        # [s] gripper must report the new state (= motion finished) within this time
 LOWER = np.array([-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -2.8973])  # Panda joint limits [rad]
 UPPER = np.array([ 2.8973,  1.7628,  2.8973, -0.0698,  2.8973,  3.7525,  2.8973])
 

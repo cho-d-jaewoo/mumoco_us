@@ -48,7 +48,6 @@ class Robot:
             if time.monotonic() > deadline:
                 raise RuntimeError("Gripper controller connected but sends no state (gripper_control_cjw?).")
             time.sleep(0.05)
-        self.set_gripper(True)             # known initial state (tutorial.py starts with 'o')
         print("[INFO] Gripper connected successfully.")
 
     # ---------------- motion ----------------
@@ -86,19 +85,29 @@ class Robot:
         return self.gripper_open
 
     def set_gripper(self, open_):
-        """Open (True) or close (False) the gripper; skipped if it already is."""
+        """Open (True) or close (False) the gripper and block until it has finished; skipped if it already is.
+
+        gripper_control_cjw streams nothing while move()/grasp() runs, so the first message
+        with the new state arrives only after the gripper motion is done.
+        """
         if open_ == self.update_gripper():
             return
         self.franka.send2gripper(self.grip, "o" if open_ else "c")
-        time.sleep(GRIPPER_WAIT)
+        deadline = time.monotonic() + GRIPPER_TIMEOUT
+        while self.update_gripper() != open_:
+            if time.monotonic() > deadline:
+                raise TimeoutError(f"Gripper did not {'open' if open_ else 'close'} within {GRIPPER_TIMEOUT} s.")
+            select.select([self.grip], [], [], 0.05)
 
     def go_home(self):
+        """Arm to home first, then open the gripper."""
         print("[INFO] Returning robot to home position...")
         self.move_joint(self.home)
+        self.set_gripper(True)
         print("[INFO] Robot returned to home position.")
 
     def execute_task(self, waypoints):
-        """Move to each waypoint, then apply its gripper state (chronological order)."""
+        """Per waypoint: move the arm there (and stop), then set the gripper and wait for it."""
         for i, wp in enumerate(waypoints, 1):
             print(f"[INFO] Waypoint {i}/{len(waypoints)}")
             self.move_joint(wp["joint_positions"])
