@@ -19,21 +19,28 @@ from trajectory_utils import active_interval
 
 
 class CorrectionRequested(Exception):
-    """Raised inside a motion after Ctrl+C was pressed during task execution."""
+    """Raised inside a motion after a correction was requested during task execution."""
+
+
+class Stopped(Exception):
+    """Raised inside robot operations when the application is shutting down."""
 
 
 class Robot:
     """Arm + gripper connection with the proven tutorial.py motion primitives."""
 
-    def __init__(self):
+    def __init__(self, should_stop=lambda: False):
         self.franka = Franka()
         self.home = self.franka.home
+        self.should_stop = should_stop     # checked in every waiting loop -> raises Stopped
         self.gripper_open = None           # measured is_open, streamed by gripper_control_cjw
+        self.gripper_target = None         # pending non-blocking command (request_gripper)
+        self.gripper_deadline = 0.0
         self.in_correction = False         # NUC ignores send2robot while in correction mode
-        self.correction_requested = False
+        self.correction_requested = False  # set by Ctrl+C, the GUI or the joystick; checked by move_joint
 
         print("[INFO] Waiting for arm_control_cjw and gripper_control_cjw on the NUC...")
-        self.conn, self.grip = self.franka.connect_robot_and_gripper(ARM_PORT, GRIPPER_PORT)
+        self.conn, self.grip = self.franka.connect_robot_and_gripper(ARM_PORT, GRIPPER_PORT, self._check_stop)
         self.conn.settimeout(CONNECT_TIMEOUT)
         try:
             q = self.franka.readState(self.conn)["q"]
@@ -50,12 +57,17 @@ class Robot:
             time.sleep(0.05)
         print("[INFO] Gripper connected successfully.")
 
+    def _check_stop(self):
+        if self.should_stop():
+            raise Stopped
+
     # ---------------- motion ----------------
     def move_joint(self, q_goal):
         """tutorial.move_joint: joint-space P-control at HZ, all joints arrive together."""
         q_goal = np.asarray(q_goal, dtype=np.float64)
         start = time.monotonic()
         while True:
+            self._check_stop()
             if self.correction_requested:
                 raise CorrectionRequested
             t0 = time.monotonic()
@@ -97,7 +109,26 @@ class Robot:
         while self.update_gripper() != open_:
             if time.monotonic() > deadline:
                 raise TimeoutError(f"Gripper did not {'open' if open_ else 'close'} within {GRIPPER_TIMEOUT} s.")
+            self._check_stop()
             select.select([self.grip], [], [], 0.05)
+
+    def gripper_busy(self):
+        """True while a request_gripper command has not reported its new state yet."""
+        if self.gripper_target is not None and (self.gripper_open == self.gripper_target
+                                                or time.monotonic() > self.gripper_deadline):
+            self.gripper_target = None
+        return self.gripper_target is not None
+
+    def request_gripper(self, open_):
+        """Send an open/close command without waiting (guiding mode keeps recording meanwhile).
+        Ignored if the gripper already is in that state or still runs the previous command
+        (gripper_control_cjw would drop a queued command). Returns True if sent."""
+        self.update_gripper()
+        if self.gripper_busy() or open_ == self.gripper_open:
+            return False
+        self.franka.send2gripper(self.grip, "o" if open_ else "c")
+        self.gripper_target, self.gripper_deadline = open_, time.monotonic() + GRIPPER_TIMEOUT
+        return True
 
     def go_home(self):
         """Arm to home first, then open the gripper."""
@@ -134,24 +165,24 @@ class Robot:
         while not self.correction_requested:
             time.sleep(0.05)
 
-    def guide(self, record):
+    def guide(self, record, tick):
         """Correction mode of arm_control_cjw: "c" -> operator guides the robot -> "v".
 
         Calls record(t, state, gripper_open) for EVERY arm state message the NUC streams
         (franka.listen2robot would keep only the newest). state = {"q", "O_F", "J"} as in franka.py;
         gripper_open is the newest measured gripper state when that arm message is read.
+        tick() is called after every socket read (must not block); guiding ends when it returns True.
         """
         self.franka.send2mode(self.conn, "c")
         self.in_correction = True
-        print("\n[CORRECTION] Activate the External Activation Switch and guide the robot"
-              " (open/close the gripper directly as needed).")
-        print("[CORRECTION] Finish: deactivate the switch, then press Enter. (Ctrl+C: quit)")
+        print("\n[CORRECTION] Correction mode active.")
         time.sleep(SETTLE_TIME)                         # let an interrupted motion ramp down
         self.franka.readState(self.conn)                # drop states received before recording
         self.update_gripper()
         buf, t0 = "", time.monotonic()
         while True:
-            ready = select.select([self.conn, self.grip, sys.stdin], [], [], 0.1)[0]
+            self._check_stop()
+            ready = select.select([self.conn, self.grip], [], [], 0.1)[0]
             if self.grip in ready:                      # gripper first -> arm samples get the newest state
                 self.update_gripper()
             if self.conn in ready:
@@ -166,8 +197,7 @@ class Robot:
                         v = np.asarray(v, dtype=np.float64)
                         record(t, {"q": v[:7], "O_F": v[7:13], "J": v[13:].reshape((7, 6)).T},
                                self.gripper_open)
-            if sys.stdin in ready:
-                sys.stdin.readline()
+            if tick():
                 break
         self.franka.send2mode(self.conn, "v")
         time.sleep(MODE_SWITCH_TIME)
@@ -185,23 +215,16 @@ class Robot:
         print("[INFO] Robot connections closed.")
 
 
-# ---------------- terminal input ----------------
+# ---------------- terminal input (record_tasks.py) ----------------
 def ask_yes_no(prompt):
     return input(f"{prompt} [y/N]: ").strip().lower() in ("y", "yes")
 
 
-def choose(title, options, allow_back="q"):
-    """Numbered menu; returns the chosen index, or None for `allow_back`."""
-    print(f"\n{title}\n")
-    for i, option in enumerate(options, 1):
-        print(f"[{i}] {option}")
-    while True:
-        answer = input(f"\nSelect (1-{len(options)}, {allow_back} = back): ").strip().lower()
-        if answer == allow_back:
-            return None
-        if answer.isdigit() and 1 <= int(answer) <= len(options):
-            return int(answer) - 1
-        print("[WARNING] Invalid selection.")
+def read_terminal_line():
+    """A typed line (stripped, lower case) if one is waiting, else None (never blocks)."""
+    if select.select([sys.stdin], [], [], 0)[0]:
+        return sys.stdin.readline().strip().lower()
+    return None
 
 
 # ---------------- tasks ----------------
@@ -251,26 +274,28 @@ def save_task(name, waypoints):
 
 
 # ---------------- physical corrections (dense) ----------------
-def execute_with_physical_correction(robot, waypoints):
-    """Run the task; on Ctrl+C switch to correction mode and return every recorded
-    (t, state, gripper_open) sample. Returns None if the task finished without correction."""
+def execute_with_physical_correction(robot, waypoints, tick):
+    """Run the task; once robot.correction_requested is set (Ctrl+C, GUI, joystick) switch to
+    correction mode and return every recorded (t, state, gripper_open) sample.
+    Returns None if the task finished without correction. tick: see Robot.guide."""
     samples = []
-    with robot.ctrl_c_requests_correction():
-        try:
-            robot.execute_task(waypoints)
-            return None
-        except CorrectionRequested:
-            print("\n[INFO] Correction requested. Task execution stopped.")
-            robot.guide(lambda t, state, gripper_open: samples.append((t, state, gripper_open)))
-    return samples
+    try:
+        robot.execute_task(waypoints)
+        return None
+    except CorrectionRequested:
+        print("\n[INFO] Correction requested. Task execution stopped.")
+        robot.guide(lambda t, state, gripper_open: samples.append((t, state, gripper_open)), tick)
+        return samples
+    finally:
+        robot.correction_requested = False
 
 
 def save_correction(task_name, modality, samples):
-    """Slice the inactive head/tail and save the dense correction trajectory."""
+    """Slice the inactive head/tail and save the dense correction trajectory; returns the path (None if nothing)."""
     interval = active_interval([s["q"] for _, s, _ in samples], [g for _, _, g in samples])
     if interval is None:
         print("[WARNING] No motion or gripper action detected. Nothing saved.")
-        return
+        return None
     start, end = interval
     t_start = samples[start][0]
     trajectory = [{"t": round(t - t_start, 4), "q": s["q"].tolist(), "O_F": s["O_F"].tolist(),
@@ -298,3 +323,4 @@ def save_correction(task_name, modality, samples):
     path.write_text(json.dumps(data))
     print(f"[INFO] Correction saved: {path.relative_to(ROOT)} "
           f"({len(trajectory)} of {len(samples)} samples, {trajectory[-1]['t']:.1f} s)")
+    return path

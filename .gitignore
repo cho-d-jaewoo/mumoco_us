@@ -9,3 +9,6 @@
 !config.py
 !tasks/
 !tasks/*.json
+!gui.py
+!joystick_input.py
+!joystick_example.py

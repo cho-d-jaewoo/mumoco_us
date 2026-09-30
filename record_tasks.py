@@ -1,58 +1,58 @@
-"""Demonstrate a task by hand-guiding the robot and save it as waypoints in tasks/."""
+"""Demonstrate a task by hand-guiding the robot and save the waypoints picked with the joystick in tasks/.
 
-import numpy as np
+Flow: connect -> home -> Ctrl+C -> guide; X = record waypoint, A/B = open/close gripper
+      -> Enter -> preview on the robot -> save?
+Keyboard fallback while guiding: type x / o / c + Enter.
+"""
 
-from trajectory_utils import active_interval, gripper_events, mandatory_indices, waypoint_indices
-from utils import Robot, ask_task_name, ask_yes_no, save_task
+from joystick_input import open_joystick
+from utils import Robot, ask_task_name, ask_yes_no, read_terminal_line, save_task
 
 
-def record_demonstration(robot):
-    """Joint positions and measured gripper state of every arm state message while guiding (nothing else is kept)."""
-    q, gripper = [], []
+def record_waypoints(robot, joystick):
+    """Each X press stores the current joint positions and the measured gripper state as one waypoint."""
+    waypoints, latest = [], {}
+
+    def record_waypoint():
+        if robot.gripper_busy():
+            print("[WARNING] Gripper is still moving. Waypoint not recorded.")
+        elif "q" in latest:
+            waypoints.append({"joint_positions": latest["q"].copy(), "gripper_open": robot.gripper_open})
+            print(f"[INFO] Waypoint {len(waypoints)} recorded "
+                  f"(gripper {'open' if robot.gripper_open else 'closed'}).")
+
+    def tick():
+        pressed = joystick.poll() if joystick else set()
+        line = read_terminal_line()
+        if "X" in pressed or line == "x":
+            record_waypoint()
+        if "A" in pressed or line == "o":
+            robot.request_gripper(True)
+        if "B" in pressed or line == "c":
+            robot.request_gripper(False)
+        return line == ""                                # Enter alone finishes guiding
+
     with robot.ctrl_c_requests_correction():
         print("\n[INFO] Press Ctrl+C to enter guiding mode.")
         robot.wait_for_ctrl_c()
-        robot.guide(lambda t, state, gripper_open: (q.append(state["q"]), gripper.append(gripper_open)))
-    return np.array(q), np.array(gripper, dtype=bool)
-
-
-def ask_waypoint_count(q, gripper):
-    minimum = len(mandatory_indices(gripper))
-    while True:
-        answer = input("Number of waypoints: ").strip()
-        if not answer.isdigit():
-            print("[WARNING] Enter a positive integer.")
-        elif int(answer) < minimum:
-            print(f"The demonstration requires at least {minimum} waypoints\n"
-                  f"because of its start/end points and gripper events.\n"
-                  f"Please enter a value >= {minimum}.")
-        elif int(answer) > len(q):
-            print(f"[WARNING] Only {len(q)} samples are available.")
-        else:
-            return int(answer)
+        print("[INFO] Activate the External Activation Switch and guide the robot.")
+        print("[INFO] X: record waypoint   A: open gripper   B: close gripper")
+        print("[INFO] Finish: deactivate the switch, then press Enter. (Ctrl+C: quit)")
+        robot.guide(lambda t, state, gripper_open: latest.update(q=state["q"]), tick)
+    return waypoints
 
 
 def main():
+    joystick = open_joystick()
     robot = Robot()
     try:
         robot.go_home()
-        q, gripper = record_demonstration(robot)
-        interval = active_interval(q, gripper)
-        if interval is None:
-            print("[WARNING] No motion or gripper action was detected.")
-        elif ask_yes_no("Extract waypoints from the recorded demonstration?"):
-            start, end = interval
-            q_active, g_active = q[start:end + 1], gripper[start:end + 1]
-            idx = waypoint_indices(q_active, g_active, ask_waypoint_count(q_active, g_active))
-            waypoints = [{"joint_positions": q_active[i], "gripper_open": bool(g_active[i])} for i in idx]
-
-            print("[INFO] Demonstration processing completed.")
-            print(f"[INFO] Recorded samples: {len(q)}")
-            print(f"[INFO] Active samples after slicing: {len(q_active)}")
-            print(f"[INFO] Detected gripper events: {len(gripper_events(g_active))}")
-            print(f"[INFO] Generated waypoints: {len(waypoints)}")
-            input("Trajectory generated successfully. Press Enter to execute it.")
-
+        waypoints = record_waypoints(robot, joystick)
+        if not waypoints:
+            print("[WARNING] No waypoints were recorded.")
+        else:
+            print(f"[INFO] Recorded waypoints: {len(waypoints)}")
+            input("Press Enter to execute the recorded waypoints.")
             robot.go_home()
             robot.execute_task(waypoints)
             print("[INFO] Preview finished.")
@@ -61,6 +61,8 @@ def main():
         robot.go_home()
     finally:
         robot.close()
+        if joystick:
+            joystick.close()
 
 
 if __name__ == "__main__":
