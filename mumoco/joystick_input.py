@@ -1,11 +1,11 @@
 """Joystick press events for record_tasks.py and main.py (pygame, as in joystick_example.py).
 
-Run `python3 joystick_input.py` to print the logical names of pressed buttons (checks the mapping).
+Run `python3 -m mumoco.joystick_input` (from the repository root) to print the logical names of pressed buttons (checks the mapping).
 """
 
 import os
 
-from config import JOY_BUTTONS, JOY_HAT, JOY_NAV_AXIS, JOY_NAV_THRESHOLD
+from .config import JOY_BUTTONS, JOY_HAT, JOY_NAV_AXIS, JOY_NAV_THRESHOLD
 
 
 class Joystick:

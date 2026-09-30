@@ -13,9 +13,9 @@ from datetime import datetime
 
 import numpy as np
 
-from config import *
-from franka import Franka
-from trajectory_utils import JointSpline, active_interval
+from .config import *
+from .franka import Franka
+from .trajectory_utils import JointSpline, active_interval, task_segments
 
 
 class CorrectionRequested(Exception):
@@ -165,17 +165,13 @@ class Robot:
 
     def execute_task(self, waypoints):
         """Drive through the waypoints without stopping; stop only where the gripper has to change
-        (then set it and wait for it) and at the last waypoint."""
-        segment = []
-        for i, wp in enumerate(waypoints, 1):
-            segment.append(wp["joint_positions"])
-            if wp["gripper_open"] != self.update_gripper() or i == len(waypoints):
-                print(f"[INFO] Moving to waypoint {i}/{len(waypoints)}")
-                self.follow(segment)
-                segment = []
-                self.set_gripper(wp["gripper_open"])
-                if self.correction_requested:
-                    raise CorrectionRequested
+        (then set it and wait for it) and at the last waypoint (see task_segments)."""
+        for points, gripper_open, last in task_segments(waypoints, self.update_gripper()):
+            print(f"[INFO] Moving to waypoint {last}/{len(waypoints)}")
+            self.follow(points)
+            self.set_gripper(gripper_open)
+            if self.correction_requested:
+                raise CorrectionRequested
 
     # ---------------- correction (hand-guiding) mode ----------------
     @contextmanager

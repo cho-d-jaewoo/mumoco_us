@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from config import JOINT_TOL, MOTION_THRESHOLD
+from .config import JOINT_TOL, MOTION_THRESHOLD
 
 
 def active_interval(q, gripper, threshold=MOTION_THRESHOLD):
@@ -62,3 +62,16 @@ class JointSpline:
         q = (2 * u**3 - 3 * u**2 + 1) * p0 + (u**3 - 2 * u**2 + u) * m0 + (3 * u**2 - 2 * u**3) * p1 + (u**3 - u**2) * m1
         qd = (6 * (u**2 - u) * (p0 - p1) + (3 * u**2 - 4 * u + 1) * m0 + (3 * u**2 - 2 * u) * m1) / h
         return q, qd / self.scale
+
+
+def task_segments(waypoints, gripper_open):
+    """How a task is driven (real robot and simulation): consecutive waypoints are passed without stopping;
+    a segment ends where the gripper has to change (it is set after arriving) and at the last waypoint.
+    Yields (joint points, gripper state after the segment, 1-based index of the segment's last waypoint)."""
+    points = []
+    for i, wp in enumerate(waypoints, 1):
+        points.append(wp["joint_positions"])
+        if wp["gripper_open"] != gripper_open or i == len(waypoints):
+            gripper_open = wp["gripper_open"]
+            yield points, gripper_open, i
+            points = []

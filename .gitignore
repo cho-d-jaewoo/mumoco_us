@@ -1,14 +1,12 @@
+# Ignore everything, then list what belongs in the repository.
 *
 !.gitignore
-!franka.py
-!tutorial.py
+!README.md
 !main.py
 !record_tasks.py
-!utils.py
-!trajectory_utils.py
-!config.py
+!sim_task.py
+!sim_correction.py
+!mumoco/
+!mumoco/*.py
 !tasks/
 !tasks/*.json
-!gui.py
-!joystick_input.py
-!joystick_example.py

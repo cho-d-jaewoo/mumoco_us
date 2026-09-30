@@ -13,8 +13,8 @@ import tkinter as tk
 import traceback
 from tkinter import font as tkfont, messagebox
 
-from joystick_input import open_joystick
-from utils import Stopped
+from .joystick_input import open_joystick
+from .utils import Stopped
 
 KEY_ACTIONS = {"<Up>": "up", "<Down>": "down", "<Left>": "up", "<Right>": "down",
                "<Return>": "confirm", "<KP_Enter>": "confirm", "<Escape>": "cancel",

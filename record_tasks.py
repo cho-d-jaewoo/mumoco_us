@@ -7,8 +7,8 @@ Keyboard fallback: Ctrl+C / Enter instead of START, x / o / c + Enter while guid
 
 import time
 
-from joystick_input import open_joystick
-from utils import Robot, ask_task_name, read_terminal_line, save_task
+from mumoco.joystick_input import open_joystick
+from mumoco.utils import Robot, ask_task_name, read_terminal_line, save_task
 
 
 def pressed(joystick):

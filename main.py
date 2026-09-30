@@ -4,8 +4,8 @@ Flow: connect -> home -> select task -> select modality -> home -> execute
       -> START (or Ctrl+C) -> physical correction -> START again -> save? -> home -> select task ...
 """
 
-from gui import ExperimentUI
-from utils import Robot, execute_with_physical_correction, load_tasks, save_correction
+from mumoco.gui import ExperimentUI
+from mumoco.utils import Robot, execute_with_physical_correction, load_tasks, save_correction
 
 
 def display_name(task):

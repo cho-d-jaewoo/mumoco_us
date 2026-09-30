@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 
 # ---------------- files ----------------
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent   # repository root
 TASK_DIR = ROOT / "tasks"
 CORRECTION_DIR = ROOT / "corrections"
 
@@ -35,6 +35,14 @@ MOTION_THRESHOLD = 1e-4      # [rad] joint change between consecutive state mess
 
 # ---------------- joystick (joystick_example.py, SteelSeries duo) ----------------
 JOY_BUTTONS = {"A": 0, "B": 1, "X": 2, "Y": 3, "BACK": 6, "START": 7}
-JOY_HAT = 0                  # D-pad as hat 0 (not in joystick_example.py -> check with `python3 joystick_input.py`)
+JOY_HAT = 0                  # D-pad as hat 0 (not in joystick_example.py -> check with `python3 -m mumoco.joystick_input`)
 JOY_NAV_AXIS = 1             # left stick up-down (joystick_example.py), also moves menu selections
 JOY_NAV_THRESHOLD = 0.5
+
+# ---------------- PyBullet simulation (sim_task.py, sim_correction.py) ----------------
+SIM_DT = 1 / 240             # [s] PyBullet time step (panda-tutorial)
+SIM_GRIPPER_TIME = 1.0       # [s] simulated gripper open/close
+SIM_ARM_FORCES = [87, 87, 87, 87, 12, 12, 12]   # [Nm] Panda joint torque limits (lfc_test)
+SIM_CAMERA = {"cameraDistance": 1.6, "cameraYaw": 50.0, "cameraPitch": -30.0, "cameraTargetPosition": [0.4, 0.0, 0.3]}
+SIM_TASK_COLOR = [42 / 255, 143 / 255, 189 / 255]          # blue: following the task waypoints
+SIM_CORRECTION_COLOR = [141 / 255, 95 / 255, 211 / 255]    # purple: replaying the recorded correction
