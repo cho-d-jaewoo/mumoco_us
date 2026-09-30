@@ -2,3 +2,10 @@
 !.gitignore
 !franka.py
 !tutorial.py
+!main.py
+!record_tasks.py
+!utils.py
+!trajectory_utils.py
+!config.py
+!tasks/
+!tasks/*.json
