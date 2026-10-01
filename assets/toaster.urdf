@@ -1,0 +1,150 @@
+<?xml version="1.0"?>
+<robot name="toaster">
+
+  <link name="body">
+    <!--
+      Body is constructed from multiple box parts to create two hollow bread slots
+      (still a single link). Overall envelope ~0.2 x 0.12 x 0.15.
+    -->
+
+    <!-- Bottom solid block -->
+    <visual>
+      <origin xyz="0 0 -0.04" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.2 0.12 0.07"/>
+      </geometry>
+      <material name="gray"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.04" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.2 0.12 0.07"/>
+      </geometry>
+    </collision>
+
+    <!-- Outer side walls (upper shell) -->
+    <visual>
+      <origin xyz="0 0.05 0.035" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.2 0.02 0.08"/>
+      </geometry>
+      <material name="gray"/>
+    </visual>
+    <visual>
+      <origin xyz="0 -0.05 0.035" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.2 0.02 0.08"/>
+      </geometry>
+      <material name="gray"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0.05 0.035" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.2 0.02 0.08"/>
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 -0.05 0.035" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.2 0.02 0.08"/>
+      </geometry>
+    </collision>
+
+    <!-- Front and back walls (upper shell) -->
+    <visual>
+      <origin xyz="0.090 0 0.035" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.02 0.12 0.08"/>
+      </geometry>
+      <material name="gray"/>
+    </visual>
+    <visual>
+      <origin xyz="-0.090 0 0.035" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.02 0.12 0.08"/>
+      </geometry>
+      <material name="gray"/>
+    </visual>
+    <collision>
+      <origin xyz="0.090 0 0.035" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.02 0.12 0.08"/>
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.090 0 0.035" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.02 0.12 0.08"/>
+      </geometry>
+    </collision>
+
+    <!-- Center divider to create two slots -->
+    <visual>
+      <origin xyz="0 0 0.035" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.2 0.02 0.08"/>
+      </geometry>
+      <material name="gray"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.035" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.2 0.02 0.08"/>
+      </geometry>
+    </collision>
+
+
+    <inertial>
+      <mass value="1"/>
+      <inertia ixx="1" ixy="0.0" ixz="0.0" iyy="1" iyz="0.0" izz="1"/>
+    </inertial>
+  </link>
+
+  <link name="handle">
+    <contact>
+      <lateral_friction value="2.0"/>
+      <spinning_friction value="0.01"/>
+    </contact>
+    <visual>
+      <geometry>
+        <box size="0.04 0.04 0.02"/>
+      </geometry>
+      <material name="red"/>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="0.04 0.04 0.02"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.1"/>
+      <inertia ixx="0.001" ixy="0.0" ixz="0.0" iyy="0.001" iyz="0.0" izz="0.001"/>
+    </inertial>
+  </link>
+
+  <joint name="slider" type="prismatic">
+    <axis xyz="0 0 1"/>
+    <limit effort="1000.0" lower="-0.08" upper="0.0" velocity="40"/>
+    <parent link="body"/>
+    <child link="handle"/>
+    <dynamics damping="0.01" friction="0.01"/>
+    <origin xyz="0.12 0.00 0.06"/>
+  </joint>
+
+  <material name="gray">
+    <color rgba="0.5 0.5 0.5 1"/>
+  </material>
+
+  <material name="white">
+    <color rgba="1 1 1 1"/>
+  </material>
+
+  <material name="red">
+    <color rgba="1 0 0 1"/>
+  </material>
+
+  <material name="black">
+    <color rgba="0.1 0.1 0.1 1"/>
+  </material>
+
+</robot>

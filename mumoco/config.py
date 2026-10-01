@@ -4,7 +4,9 @@ import numpy as np
 
 # ---------------- files ----------------
 ROOT = Path(__file__).resolve().parent.parent   # repository root
-TASK_DIR = ROOT / "tasks"
+TASK_DIR = ROOT / "tasks"                 # tasks shown in the experiment
+ANSWER_DIR = ROOT / "task_answers"        # <base>_answer.json: how each task should be done
+VIDEO_DIR = ROOT / "task_videos"          # <task>.webp, made by sim_task.py, shown by "View Scenario"
 CORRECTION_DIR = ROOT / "corrections"
 
 # ---------------- connection (arm_control_cjw.cpp / gripper_control_cjw.cpp) ----------------
@@ -37,6 +39,7 @@ MOTION_THRESHOLD = 1e-4      # [rad] joint change between consecutive state mess
 JOY_BUTTONS = {"A": 0, "B": 1, "X": 2, "Y": 3, "BACK": 6, "START": 7}
 JOY_HAT = 0                  # D-pad as hat 0 (not in joystick_example.py -> check with `python3 -m mumoco.joystick_input`)
 JOY_NAV_AXIS = 1             # left stick up-down (joystick_example.py), also moves menu selections
+JOY_NAV_AXIS_X = 0           # left stick left-right (joystick_example.py)
 JOY_NAV_THRESHOLD = 0.5
 
 # ---------------- PyBullet simulation (sim_task.py, sim_correction.py) ----------------
@@ -46,3 +49,17 @@ SIM_ARM_FORCES = [87, 87, 87, 87, 12, 12, 12]   # [Nm] Panda joint torque limits
 SIM_CAMERA = {"cameraDistance": 1.6, "cameraYaw": 50.0, "cameraPitch": -30.0, "cameraTargetPosition": [0.4, 0.0, 0.3]}
 SIM_TASK_COLOR = [42 / 255, 143 / 255, 189 / 255]          # blue: following the task waypoints
 SIM_CORRECTION_COLOR = [141 / 255, 95 / 255, 211 / 255]    # purple: replaying the recorded correction
+
+# ---------------- task videos (sim_task.py) ----------------
+VIDEO_FPS = 20
+VIDEO_SIZE = (640, 360)      # [px] width, height
+VIDEO_HOLD = (0.8, 1.5)      # [s] still frames before the motion starts and after it ends
+
+# ---------------- simulation scenes, chosen by the task base name (pnp_spill -> "pnp") ----------------
+# Camera: side view with the robot on the left and the task area on the right.
+SCENE_CAMERAS = {
+    "pnp": {"cameraDistance": 1.55, "cameraYaw": 5.0, "cameraPitch": -12.0, "cameraTargetPosition": [0.45, 0.0, 0.32]},
+}
+PNP_CUP_SCALE = 1.2          # pybullet_data mug; it stands where the gripper first closes, handle toward the robot
+PNP_TOASTER = {"x": 0.725, "y": -0.035, "scale": 0.7}   # between cup and goal: answer/spill pass above it,
+                                                         # down_too_early/straight_to_goal hit it

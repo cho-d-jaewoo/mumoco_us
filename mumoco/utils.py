@@ -277,6 +277,31 @@ def load_tasks():
     return tasks
 
 
+def find_task_path(name):
+    """tasks/<name>.json or task_answers/<name>.json, or None."""
+    return next((path for path in (TASK_DIR / f"{name}.json", ANSWER_DIR / f"{name}.json") if path.exists()), None)
+
+
+def answer_task_name(task_name):
+    """'<base>_<error type>' -> '<base>_answer' (e.g. pnp_straight_to_goal -> pnp_answer).
+
+    The base is the longest one with an answer file in task_answers/ that prefixes the task name
+    (error types may contain '_'); without a matching file, the base is the first word of the name.
+    """
+    bases = sorted((path.stem[:-len("_answer")] for path in ANSWER_DIR.glob("*_answer.json")), key=len, reverse=True)
+    base = next((b for b in bases if task_name == f"{b}_answer" or task_name.startswith(f"{b}_")),
+                task_name.split("_")[0])
+    return f"{base}_answer"
+
+
+def task_base_name(task_name):
+    return answer_task_name(task_name)[:-len("_answer")]
+
+
+def task_video_path(task_name):
+    return VIDEO_DIR / f"{task_name}.webp"
+
+
 def ask_task_name():
     while True:
         name = re.sub(r"[^A-Za-z0-9_-]+", "_", input("Task name: ").strip()).strip("_")

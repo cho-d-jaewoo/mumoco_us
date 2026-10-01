@@ -1,7 +1,7 @@
 """Tkinter window for main.py.
 
 Keyboard, mouse and joystick are all turned into the same actions
-(up, down, confirm, yes, no, cancel, correct, open, close); each screen decides what they do.
+(up, down, left, right, confirm, yes, no, cancel, correct, open, close); each screen decides what they do.
 The experiment runs in a worker thread and changes screens only through the public methods
 below (Tk itself is used only in the window thread).
 """
@@ -14,13 +14,15 @@ import traceback
 from tkinter import font as tkfont, messagebox
 
 from .joystick_input import open_joystick
-from .utils import Stopped
+from .utils import Stopped, answer_task_name, find_task_path, task_video_path
+from .video import SyncedVideos
 
-KEY_ACTIONS = {"<Up>": "up", "<Down>": "down", "<Left>": "up", "<Right>": "down",
+KEY_ACTIONS = {"<Up>": "up", "<Down>": "down", "<Left>": "left", "<Right>": "right",
                "<Return>": "confirm", "<KP_Enter>": "confirm", "<Escape>": "cancel",
                "y": "yes", "Y": "yes", "n": "no", "N": "no", "o": "open", "O": "open", "c": "close", "C": "close",
                "<Control-c>": "correct"}
-JOY_ACTIONS = {"UP": "up", "DOWN": "down", "Y": "yes", "X": "no", "START": "correct", "A": "open", "B": "close"}
+JOY_ACTIONS = {"UP": "up", "DOWN": "down", "LEFT": "left", "RIGHT": "right", "Y": "yes", "X": "no",
+               "START": "correct", "A": "open", "B": "close"}
 
 ORANGE, GREEN, BLUE, PURPLE = "#ff9900", "#a0d4a4", "#2a8fbd", "#8d5fd3"
 LIGHT_GRAY, DARK_GRAY, WHITE = "#b3b3b3", "#666666", "#ffffff"
@@ -40,7 +42,9 @@ class ExperimentUI:
     def __init__(self, title="Robot Experiment"):
         self.root = tk.Tk()
         self.root.title(title)
-        self.root.geometry("1000x720")
+        width = min(1280, self.root.winfo_screenwidth() - 40)   # large enough for two videos side by side
+        height = min(800, self.root.winfo_screenheight() - 80)
+        self.root.geometry(f"{width}x{height}")
         self.root.configure(bg=BG)
         installed = set(tkfont.families(self.root))
         self.font = next((f for f in FONTS if f in installed), "TkDefaultFont")
@@ -51,6 +55,7 @@ class ExperimentUI:
         self._commands = queue.Queue()       # correction commands for the worker: open / close / finish
         self._actions = {}                   # action -> handler of the current screen
         self._waiting = False                # a choose()/ask_yes_no() answer is expected
+        self._cleanup = None                 # stops what the current screen runs (video playback)
         self._worker = None
         self.joystick = open_joystick()
 
@@ -97,9 +102,10 @@ class ExperimentUI:
         self._inbox.put((self._show, ("error", "Something Went Wrong", text,
                                       "The robot was stopped. Close this window and restart the program.")))
 
-    def choose(self, title, options, disabled=(), back=False):
-        """Blocks until an enabled option is confirmed; returns its index (None = back, if allowed)."""
-        self._inbox.put((self._list_screen, (title, options, set(disabled), back)))
+    def choose(self, title, options, disabled=(), back=False, scenario=None):
+        """Blocks until an enabled option is confirmed; returns its index (None = back, if allowed).
+        scenario: a task name; adds "View Scenario" (that task's video next to its answer's video)."""
+        self._inbox.put((self._list_screen, (title, options, set(disabled), back, scenario)))
         return self._wait_answer()
 
     def ask_yes_no(self, title, text=""):
@@ -176,6 +182,9 @@ class ExperimentUI:
             self._answers.put(value)
 
     def _show(self, mode, title, text="", hint="", actions=None):
+        if self._cleanup:
+            self._cleanup()
+            self._cleanup = None
         banner, color, text_color = BANNERS[mode]
         self.banner.configure(text=banner, bg=color, fg=text_color)
         self.title.configure(text=title)
@@ -205,50 +214,120 @@ class ExperimentUI:
         label.pack(pady=8)
         return label
 
-    def _list_screen(self, title, options, disabled, back):
-        sel, top = [0], [0]
+    def _list_screen(self, title, options, disabled, back, scenario=None, sel=0):
+        """Highlighted list. With a scenario, a "View Scenario" button sits left of it; Left / Right move
+        the focus between the button and the list, Up / Down move within the list."""
+        state = {"sel": sel, "top": 0, "focus": "list"}
 
         def refresh():
-            top[0] = min(max(top[0], sel[0] - VISIBLE_ITEMS + 1), sel[0])
+            state["top"] = min(max(state["top"], state["sel"] - VISIBLE_ITEMS + 1), state["sel"])
             for row, label in enumerate(rows):
-                i = top[0] + row
-                on = i == sel[0]
+                i = state["top"] + row
+                on = i == state["sel"]
                 text = options[i] + ("  (not available)" if i in disabled else "")
-                label.configure(text=("▶  " if on else "     ") + text)
-                self._highlight(label, on, i in disabled)
+                label.configure(text=("\u25B6  " if on else "     ") + text)
+                self._highlight(label, on and state["focus"] == "list", i in disabled)
+                if on and state["focus"] != "list":             # keep the selection visible, unfocused
+                    label.configure(highlightbackground=ACCENT, highlightcolor=ACCENT)
+            if side:
+                self._highlight(side, state["focus"] == "side")
 
         def move(step):
-            sel[0] = min(max(sel[0] + step, 0), len(options) - 1)
-            self.subtitle.configure(text="")
-            refresh()
+            if state["focus"] == "list":
+                state["sel"] = min(max(state["sel"] + step, 0), len(options) - 1)
+                self.subtitle.configure(text="")
+                refresh()
+
+        def focus(where):
+            if side:
+                state["focus"] = where
+                refresh()
 
         def confirm():
-            if sel[0] in disabled:
-                self.subtitle.configure(text=f"{options[sel[0]]} correction is not implemented yet.", fg=WARN)
+            if state["focus"] == "side":
+                view_scenario()
+            elif state["sel"] in disabled:
+                self.subtitle.configure(text=f"{options[state['sel']]} correction is not implemented yet.", fg=WARN)
             else:
-                self._answer(sel[0])
+                self._answer(state["sel"])
+
+        def view_scenario():
+            self._scenario_screen(scenario, lambda: self._list_screen(title, options, disabled, back, scenario,
+                                                                      state["sel"]))
 
         def click(row):
-            sel[0] = top[0] + row
+            state["sel"], state["focus"] = state["top"] + row, "list"
             refresh()
 
         actions = {"up": lambda: move(-1), "down": lambda: move(1), "confirm": confirm, "yes": confirm}
-        hint = "↑ ↓ / D-pad: move     Enter / Y: confirm"
+        hint = "\u2191 \u2193 / D-pad: move     Enter / Y: confirm"
+        if scenario:
+            actions.update(left=lambda: focus("side"), right=lambda: focus("list"), scenario=view_scenario)
+            hint = "\u2190 \u2192: View Scenario / list     " + hint
         if back:
             actions["no"] = actions["cancel"] = lambda: self._answer(None)
             hint += "     Esc / X: back"
         self._show("input", title, "", hint, actions)
+        columns = tk.Frame(self.body, bg=BG)
+        columns.pack()
+        side = self._button("View Scenario", "scenario", columns) if scenario else None
+        if side:
+            side.pack(side="left", padx=(0, 60))
+        column = tk.Frame(columns, bg=BG)
+        column.pack(side="left")
         rows = []
         for row in range(min(len(options), VISIBLE_ITEMS)):
-            label = tk.Label(self.body, font=(self.font, 24), anchor="w", padx=30, pady=12, width=30,
+            label = tk.Label(column, font=(self.font, 24), anchor="w", padx=30, pady=12, width=26 if side else 30,
                              highlightthickness=2, cursor="hand2")
             label.pack(pady=5)
             label.bind("<Button-1>", lambda event, r=row: click(r))
             label.bind("<Double-Button-1>", lambda event: confirm())
             rows.append(label)
-        self._button("Confirm", "confirm").pack(pady=24)
+        self._button("Confirm", "confirm", column).pack(pady=24)
         refresh()
         self._waiting = True
+
+    def _scenario_screen(self, task_name, back):
+        """The task's video ("WILL act") next to its answer task's video ("SHOULD act"), looping in sync."""
+        answer = answer_task_name(task_name)
+        self._show("input", "Scenario", "", "Enter / Y / Esc / X: back",
+                   {action: back for action in ("confirm", "yes", "no", "cancel")})
+        self.root.update_idletasks()
+        width = min((self.root.winfo_width() - 120) // 2, int((self.root.winfo_height() - 380) * 16 / 9))
+        size = (max(width, 240), max(width, 240) * 9 // 16)
+        if find_task_path(answer) is None and not task_video_path(answer).exists():
+            answer_missing = f"No answer task found for: {task_name}"
+        else:
+            answer_missing = f"Answer video not found for: {answer}"
+        columns = tk.Frame(self.body, bg=BG)
+        columns.pack()
+        labels, paths = [], []
+        for heading, name, missing in (("How the robot WILL act", task_name, f"Task video not found for: {task_name}"),
+                                       ("How the robot SHOULD act", answer, answer_missing)):
+            column = tk.Frame(columns, bg=BG)
+            column.pack(side="left", padx=20)
+            tk.Label(column, text=heading, font=(self.font, 26, "bold"), bg=BG, fg=FG).pack(pady=(0, 12))
+            box = tk.Frame(column, width=size[0], height=size[1], bg=BG, highlightthickness=2,
+                           highlightbackground=MUTED)
+            box.pack_propagate(False)
+            box.pack()
+            video = tk.Label(box, bg=BG, fg=FG, font=(self.font, 18), wraplength=size[0] - 40)
+            video.pack(fill="both", expand=True)
+            if task_video_path(name).exists():
+                labels.append(video)
+                paths.append(task_video_path(name))
+            else:
+                video.configure(text=missing)
+        self._button("Back", "confirm").pack(pady=24)
+        if paths:
+            try:
+                player = SyncedVideos(self.root, labels, paths, size,
+                                      on_error=lambda i, message: labels[i].configure(text=message, image=""))
+            except ImportError:
+                for label in labels:
+                    label.configure(text="Video playback needs Pillow (pip install pillow).")
+            else:
+                self._cleanup = player.stop
 
     def _yes_no_screen(self, title, text):
         sel = [1]                                        # 0 = Yes, 1 = No (default)
@@ -261,7 +340,8 @@ class ExperimentUI:
             sel[0] = 1 - sel[0]
             refresh()
 
-        actions = {"up": toggle, "down": toggle, "confirm": lambda: self._answer(sel[0] == 0),
+        actions = {"up": toggle, "down": toggle, "left": toggle, "right": toggle,
+                   "confirm": lambda: self._answer(sel[0] == 0),
                    "yes": lambda: self._answer(True), "no": lambda: self._answer(False),
                    "cancel": lambda: self._answer(False)}
         self._show("input", title, text, "← →: move     Enter: confirm     Y: yes     N / X / Esc: no",

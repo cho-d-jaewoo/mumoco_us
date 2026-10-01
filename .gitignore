@@ -10,3 +10,9 @@
 !mumoco/*.py
 !tasks/
 !tasks/*.json
+!task_answers/
+!task_answers/*.json
+!task_videos/
+!task_videos/*.webp
+!assets/
+!assets/*.urdf

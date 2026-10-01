@@ -7,10 +7,10 @@
 import argparse
 from pathlib import Path
 
-from mumoco.config import SIM_CORRECTION_COLOR, SIM_TASK_COLOR, TASK_DIR
-from mumoco.sim import (Simulation, find_correction_start, load_correction, newest_correction, plan_task,
+from mumoco.config import SIM_CORRECTION_COLOR, SIM_TASK_COLOR
+from mumoco.sim import (find_correction_start, load_correction, make_simulation, newest_correction, plan_task,
                         play_correction, play_task)
-from mumoco.utils import load_task
+from mumoco.utils import find_task_path, load_task, task_base_name
 
 
 def main():
@@ -20,9 +20,9 @@ def main():
     parser.add_argument("--speed", type=float, default=1.0, help="playback speed (default: real time)")
     parser.add_argument("--no-gui", action="store_true", help="run without a window (quick check)")
     args = parser.parse_args()
-    path = TASK_DIR / f"{args.task}.json"
-    if not path.exists():
-        parser.error(f"no task '{args.task}'. Available: {', '.join(p.stem for p in sorted(TASK_DIR.glob('*.json')))}")
+    path = find_task_path(args.task)
+    if path is None:
+        parser.error(f"no task '{args.task}' in tasks/ or task_answers/")
     task = load_task(path)
     correction_path = args.correction or newest_correction(args.task)
     if correction_path is None:
@@ -40,7 +40,7 @@ def main():
     if distance > 0.1:
         print("[WARNING] The correction does not start on the task path; the robot jumps to its start.")
 
-    sim = Simulation(gui=not args.no_gui, speed=args.speed)
+    sim = make_simulation(task_base_name(args.task), task["waypoints"], gui=not args.no_gui, speed=args.speed)
     sim.mark_waypoints(task["waypoints"])
     sim.show(f"Following task: {task['name']}", SIM_TASK_COLOR)
     play_task(sim, plan, stop=(segment, t))

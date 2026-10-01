@@ -5,12 +5,12 @@ Run `python3 -m mumoco.joystick_input` (from the repository root) to print the l
 
 import os
 
-from .config import JOY_BUTTONS, JOY_HAT, JOY_NAV_AXIS, JOY_NAV_THRESHOLD
+from .config import JOY_BUTTONS, JOY_HAT, JOY_NAV_AXIS, JOY_NAV_AXIS_X, JOY_NAV_THRESHOLD
 
 
 class Joystick:
     """poll() returns the logical buttons pressed since the last call ("A", "B", "X", "Y", "BACK",
-    "START", "UP", "DOWN"). Only the press itself counts: holding a button gives one event."""
+    "START", "UP", "DOWN", "LEFT", "RIGHT"). Only the press itself counts: holding a button gives one event."""
 
     def __init__(self):
         os.environ.setdefault("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1")  # our window is not a pygame window
@@ -26,11 +26,16 @@ class Joystick:
         g = self.gamepad
         held = {name for name, i in JOY_BUTTONS.items() if g.get_button(i)}
         hat_y = g.get_hat(JOY_HAT)[1] if g.get_numhats() > JOY_HAT else 0
-        stick = g.get_axis(JOY_NAV_AXIS)                 # up is negative
+        hat_x = g.get_hat(JOY_HAT)[0] if g.get_numhats() > JOY_HAT else 0
+        stick, stick_x = g.get_axis(JOY_NAV_AXIS), g.get_axis(JOY_NAV_AXIS_X)   # up / left are negative
         if hat_y > 0 or stick < -JOY_NAV_THRESHOLD:
             held.add("UP")
         if hat_y < 0 or stick > JOY_NAV_THRESHOLD:
             held.add("DOWN")
+        if hat_x < 0 or stick_x < -JOY_NAV_THRESHOLD:
+            held.add("LEFT")
+        if hat_x > 0 or stick_x > JOY_NAV_THRESHOLD:
+            held.add("RIGHT")
         return held
 
     def poll(self):
