@@ -12,10 +12,11 @@ import numpy as np
 import pybullet as p
 import pybullet_data
 
-from .config import (AMAX, CORRECTION_DIR, PNP_CUP_SCALE, PNP_TOASTER, ROOT, SCENE_CAMERAS, SIM_ARM_FORCES,
+from .config import (AMAX, BIT_PLATE, CORRECTION_DIR, PNP_CUP_SCALE, PNP_TOASTER, ROOT, SCENE_CAMERAS, SIM_ARM_FORCES,
                      SIM_CAMERA, SIM_DT, SIM_GRIPPER_TIME, VIDEO_FPS, VIDEO_SIZE, VMAX)
 from .franka import Franka
 from .trajectory_utils import JointSpline, task_segments
+from .utils import find_task_path, load_task
 
 HOME = Franka().home
 EE_LINK = 11                        # panda_grasptarget in pybullet_data's panda.urdf
@@ -169,13 +170,20 @@ class Simulation:
 
 
 # ---------------- scenes ----------------
-def pnp_scene(sim, waypoints):
-    """Red mug whose handle (facing the robot) is where the gripper first closes, on a table at that
-    height, and a toaster between the mug and the goal."""
+def grasp_and_release(waypoints):
+    """Joint positions where the gripper first closes and where it opens again after that."""
+    k = next(i for i, w in enumerate(waypoints) if not w["gripper_open"])
+    release = next((w for w in waypoints[k:] if w["gripper_open"]), waypoints[-1])
+    return waypoints[k]["joint_positions"], release["joint_positions"]
+
+
+def pnp_scene(sim, task, answer):
+    """Red mug whose handle (facing the robot) is where the task itself grasps, on a table at that height,
+    and a toaster between the mug and the goal. (Placed from each task, not from the answer: the toaster
+    position is tuned to the cup heights of the recorded tasks.)"""
     s = PNP_CUP_SCALE
     handle = np.array([-0.073, 0.0, 0.05]) * s     # grasp point on the handle, mug turned so the handle faces -x
-    grasp = next(w for w in waypoints if not w["gripper_open"])
-    cup = np.array(sim.hand_pose(grasp["joint_positions"])[0]) - handle
+    cup = np.array(sim.hand_pose(grasp_and_release(task)[0])[0]) - handle
     sim.add_table(cup[2])
     yaw = p.getQuaternionFromEuler([0, 0, np.pi / 2])            # mug.urdf handle points to +y -> -x
     mug = p.loadURDF(os.path.join(DATA, "objects/mug.urdf"), basePosition=cup, baseOrientation=yaw, globalScaling=s)
@@ -187,14 +195,62 @@ def pnp_scene(sim, waypoints):
     sim.graspable.append(mug)
 
 
-SCENES = {"pnp": pnp_scene}
+BREAD = {"width": 0.11, "thickness": 0.015, "height": 0.125, "grasp": 0.105}   # [m]; grasped 2 cm below the top
+
+
+def bread_slice(position):
+    """Upright slice of bread (square bottom, round top), thin along y, bottom center at `position`."""
+    w, t, h = BREAD["width"], BREAD["thickness"], BREAD["height"]
+    r, box = w / 2, h - w / 2                       # round top radius, height of the square part
+    along_y = p.getQuaternionFromEuler([np.pi / 2, 0, 0])        # cylinder axis along y (the thickness)
+    shapes = dict(shapeTypes=[p.GEOM_BOX, p.GEOM_CYLINDER], halfExtents=[[r, t / 2, box / 2], [0, 0, 0]],
+                  radii=[0, r], lengths=[0, t])
+    frames = dict(positions=[[0, 0, box / 2], [0, 0, box]], orientations=[[0, 0, 0, 1], along_y])
+    collision = p.createCollisionShapeArray(**shapes, collisionFramePositions=frames["positions"],
+                                            collisionFrameOrientations=frames["orientations"])
+    visual = p.createVisualShapeArray(**shapes, visualFramePositions=frames["positions"],
+                                      visualFrameOrientations=frames["orientations"],
+                                      rgbaColors=[[0.86, 0.66, 0.38, 1]] * 2)
+    return p.createMultiBody(baseMass=0.03, baseCollisionShapeIndex=collision, baseVisualShapeIndex=visual,
+                             basePosition=position, baseInertialFramePosition=[0, 0, h / 2])
+
+
+def bit_scene(sim, task, answer):
+    """Bread in toaster: a slice of bread standing where the answer task grasps it, a toaster whose slot
+    is where the answer task drops it, and a blue plate (BIT_PLATE)."""
+    grasp_q, release_q = grasp_and_release(answer)
+    grasp_pos, grasp_orn = sim.hand_pose(grasp_q)
+    bottom = np.array(grasp_pos) - [0, 0, BREAD["grasp"]]
+    sim.add_table(bottom[2])
+    # where the answer task releases the bread: the bread keeps its pose relative to the hand
+    inv = p.invertTransform(grasp_pos, grasp_orn)
+    in_hand = p.multiplyTransforms(*inv, bottom.tolist(), [0, 0, 0, 1])
+    drop = p.multiplyTransforms(*sim.hand_pose(release_q), *in_hand)[0]
+    # toaster turned so its slots run along y; the slot nearer the robot (0.025 m off center) under the drop
+    yaw = p.getQuaternionFromEuler([0, 0, np.pi / 2])
+    p.loadURDF(str(ROOT / "assets" / "toaster.urdf"), baseOrientation=yaw,
+               basePosition=[drop[0] + 0.025, drop[1], bottom[2] + 0.075])
+    plate = p.createVisualShape(p.GEOM_CYLINDER, radius=BIT_PLATE["radius"], length=0.012,
+                                rgbaColor=[42 / 255, 143 / 255, 189 / 255, 1])
+    plate_collision = p.createCollisionShape(p.GEOM_CYLINDER, radius=BIT_PLATE["radius"], height=0.012)
+    p.createMultiBody(baseMass=0, baseCollisionShapeIndex=plate_collision, baseVisualShapeIndex=plate,
+                      basePosition=[BIT_PLATE["x"], BIT_PLATE["y"], bottom[2] + 0.006])
+    bread = bread_slice(bottom)
+    sim.no_collision(bread)                        # the hand holds it through a constraint (set_gripper)
+    sim.graspable.append(bread)
+
+
+SCENES = {"pnp": pnp_scene, "bit": bit_scene}
 
 
 def make_simulation(base_name, waypoints, gui=True, speed=1.0):
-    """Scene for the task's base name (pnp_spill -> "pnp"); robot and table only for other tasks."""
+    """Scene for the task's base name (pnp_spill -> "pnp"); scenes get the task and the base's answer task.
+    Robot and table only for other tasks."""
     sim = Simulation(gui, speed, SCENE_CAMERAS.get(base_name, SIM_CAMERA))
-    if base_name in SCENES and not all(w["gripper_open"] for w in waypoints):
-        SCENES[base_name](sim, waypoints)
+    answer_path = find_task_path(f"{base_name}_answer")
+    answer = load_task(answer_path)["waypoints"] if answer_path else waypoints
+    if base_name in SCENES and not all(w["gripper_open"] for w in answer):
+        SCENES[base_name](sim, waypoints, answer)
         sim.wait(0.3)                              # let the objects settle on the table
         sim.time = 0.0
     else:
