@@ -363,16 +363,15 @@ class ExperimentUI:
             refresh()
 
         actions = {"up": toggle, "down": toggle, "left": toggle, "right": toggle,
-                   "confirm": lambda: self._answer(sel[0] == 0),
-                   "yes": lambda: self._answer(True), "no": lambda: self._answer(False),
-                   "cancel": lambda: self._answer(False)}
-        self._show("input", title, text, "← →: move     Enter: confirm     Y: yes     N / X / Esc: no",
-                   actions)
+                   "confirm": lambda: self._answer(sel[0] == 0), "yes": lambda: self._answer(sel[0] == 0),
+                   "pick_yes": lambda: self._answer(True), "pick_no": lambda: self._answer(False)}   # mouse clicks
+        self._show("input", title, text, "Y : Confirm", actions)
         row = tk.Frame(self.body, bg=BG)
-        row.pack(pady=30)
-        buttons = [self._button("Yes", "yes", row), self._button("No", "no", row)]
+        row.pack(pady=40)
+        buttons = [self._button("Yes", "pick_yes", row), self._button("No", "pick_no", row)]
         for button in buttons:
-            button.pack(side="left", padx=30)
+            button.configure(font=(self.font, 32, "bold"), width=6, pady=36)
+            button.pack(side="left", padx=40)
         refresh()
         self._waiting = True
 
@@ -407,9 +406,8 @@ class ExperimentUI:
 
         self._show("moving", "Executing Task", task_name, "", {"correct": correct})
         info = self._text("Robot is performing the task.")
-        self._text("To correct the robot, press START on the joystick,\nCtrl+C, or the button below.",
+        self._text("To correct the robot, press START.",
                    size=18)
-        self._button("Request Correction", "correct").pack(pady=24)
 
     def _correction_screen(self):
         def finish():
@@ -421,9 +419,7 @@ class ExperimentUI:
                    "correct": finish}                    # START again (or Ctrl+C) ends the correction
         self._show("correction", "Physical Correction",
                    "Press the External Activation Switch\nand guide the robot.", "", actions)
-        self._text("A / O:  Open Gripper        B / C:  Close Gripper", size=20)
-        info = self._text("When you are done, release the switch and press START again.", size=18)
+        self._text("A :  Open Gripper        B :  Close Gripper", size=20)
+        info = self._text("When you are done, press START again.", size=18)
         row = tk.Frame(self.body, bg=BG)
         row.pack(pady=20)
-        for text, action in (("Open Gripper", "open"), ("Close Gripper", "close"), ("Finish", "correct")):
-            self._button(text, action, row).pack(side="left", padx=12)
