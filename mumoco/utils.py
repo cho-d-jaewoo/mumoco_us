@@ -302,9 +302,14 @@ def task_video_path(task_name):
     return VIDEO_DIR / f"{task_name}.webp"
 
 
+def safe_name(text):
+    """Text usable in a file name: letters, digits, '_' and '-' (other characters become '_')."""
+    return re.sub(r"[^\w-]+", "_", text.strip()).strip("_")
+
+
 def ask_task_name():
     while True:
-        name = re.sub(r"[^A-Za-z0-9_-]+", "_", input("Task name: ").strip()).strip("_")
+        name = safe_name(input("Task name: "))
         if not name:
             print("[WARNING] Use letters, digits, '_' or '-'.")
         elif not (TASK_DIR / f"{name}.json").exists() or ask_yes_no(f"Task '{name}' exists. Overwrite?"):
@@ -338,7 +343,7 @@ def execute_with_physical_correction(robot, waypoints, tick):
         robot.correction_requested = False
 
 
-def save_correction(task_name, modality, samples):
+def save_correction(task_name, modality, samples, user):
     """Slice the inactive head/tail and save the dense correction trajectory; returns the path (None if nothing)."""
     interval = active_interval([s["q"] for _, s, _ in samples], [g for _, _, g in samples])
     if interval is None:
@@ -367,7 +372,7 @@ def save_correction(task_name, modality, samples):
     }
     folder = CORRECTION_DIR / task_name
     folder.mkdir(parents=True, exist_ok=True)
-    path = folder / f"correction_{now:%Y%m%d_%H%M%S}.json"
+    path = folder / f"{task_name}_{user}_{now:%Y%m%d_%H%M%S}.json"
     path.write_text(json.dumps(data))
     print(f"[INFO] Correction saved: {path.relative_to(ROOT)} "
           f"({len(trajectory)} of {len(samples)} samples, {trajectory[-1]['t']:.1f} s)")

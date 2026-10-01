@@ -14,7 +14,7 @@ import traceback
 from tkinter import font as tkfont, messagebox
 
 from .joystick_input import open_joystick
-from .utils import Stopped, answer_task_name, find_task_path, task_video_path
+from .utils import Stopped, answer_task_name, find_task_path, safe_name, task_video_path
 from .video import SyncedVideos
 
 KEY_ACTIONS = {"<Up>": "up", "<Down>": "down", "<Left>": "left", "<Right>": "right",
@@ -102,17 +102,28 @@ class ExperimentUI:
         self._inbox.put((self._show, ("error", "Something Went Wrong", text,
                                       "The robot was stopped. Close this window and restart the program.")))
 
-    def choose(self, title, options, disabled=(), back=False, scenario=None, subtitle=""):
+    def choose(self, title, options, disabled=(), back=False, scenario=None, subtitle="", completed=()):
         """Blocks until an enabled option is confirmed; returns its index (None = back, if allowed).
-        scenario: a task name; adds "View Scenario" (that task's video next to its answer's video).
-        subtitle: shown under the title (e.g. the selected task)."""
-        self._inbox.put((self._list_screen, (title, options, set(disabled), back, scenario, subtitle)))
+        disabled: shown as "not available" (selecting it explains why); completed: shown as completed and
+        skipped (cannot be selected). scenario: a task name; adds "View Scenario" (that task's video next
+        to its answer's video). subtitle: shown under the title (e.g. the selected task)."""
+        self._inbox.put((self._list_screen, (title, options, set(disabled), back, scenario, subtitle, set(completed))))
+        return self._wait_answer()
+
+    def ask_name(self, title="Enter Your Name"):
+        """Blocks until a non-empty name is entered; returns it made safe for file names."""
+        self._inbox.put((self._name_screen, (title,)))
         return self._wait_answer()
 
     def ask_yes_no(self, title, text=""):
         """Blocks until Yes or No is chosen; No is preselected."""
         self._inbox.put((self._yes_no_screen, (title, text)))
         return self._wait_answer()
+
+    def wait_for_start(self, title, text):
+        """Instruction screen; blocks until START (or Ctrl+C) is pressed."""
+        self._inbox.put((self._start_screen, (title, text)))
+        self._wait_answer()
 
     def show_execution(self, task_name, request_correction):
         """Task screen; START / Ctrl+C / the button call request_correction() once."""
@@ -217,9 +228,12 @@ class ExperimentUI:
         label.pack(pady=8)
         return label
 
-    def _list_screen(self, title, options, disabled, back, scenario=None, subtitle="", sel=0):
+    def _list_screen(self, title, options, disabled, back, scenario=None, subtitle="", completed=(), sel=0):
         """Highlighted list. With a scenario, a "View Scenario" button sits left of it; Left / Right move
         the focus between the button and the list, Up / Down move within the list."""
+        selectable = [i for i in range(len(options)) if i not in completed]
+        if sel in completed and selectable:
+            sel = selectable[0]
         state = {"sel": sel, "top": 0, "focus": "list"}
 
         def refresh():
@@ -227,17 +241,18 @@ class ExperimentUI:
             for row, label in enumerate(rows):
                 i = state["top"] + row
                 on = i == state["sel"]
-                text = options[i] + ("  (not available)" if i in disabled else "")
+                text = options[i] + ("  [Completed]" if i in completed else "  (not available)" if i in disabled else "")
                 label.configure(text=("\u25B6  " if on else "     ") + text)
-                self._highlight(label, on and state["focus"] == "list", i in disabled)
+                self._highlight(label, on and state["focus"] == "list", i in disabled or i in completed)
                 if on and state["focus"] != "list":             # keep the selection visible, unfocused
                     label.configure(highlightbackground=ACCENT, highlightcolor=ACCENT)
             if side:
                 self._highlight(side, state["focus"] == "side")
 
         def move(step):
-            if state["focus"] == "list":
-                state["sel"] = min(max(state["sel"] + step, 0), len(options) - 1)
+            ahead = [i for i in selectable if (i - state["sel"]) * step > 0]   # completed items are skipped
+            if state["focus"] == "list" and ahead:
+                state["sel"] = min(ahead, key=lambda i: abs(i - state["sel"]))
                 message.configure(text="")
                 refresh()
 
@@ -249,18 +264,21 @@ class ExperimentUI:
         def confirm():
             if state["focus"] == "side":
                 view_scenario()
+            elif state["sel"] in completed:
+                return
             elif state["sel"] in disabled:
                 message.configure(text=f"{options[state['sel']]} correction is not implemented yet.")
             else:
                 self._answer(state["sel"])
 
         def view_scenario():
-            self._scenario_screen(scenario, lambda: self._list_screen(title, options, disabled, back, scenario, subtitle,
-                                                                      state["sel"]))
+            self._scenario_screen(scenario, lambda: self._list_screen(
+                title, options, disabled, back, scenario, subtitle, completed, state["sel"]))
 
         def click(row):
-            state["sel"], state["focus"] = state["top"] + row, "list"
-            refresh()
+            if state["top"] + row not in completed:
+                state["sel"], state["focus"] = state["top"] + row, "list"
+                refresh()
 
         actions = {"up": lambda: move(-1), "down": lambda: move(1), "confirm": confirm, "yes": confirm}
         hint = "\u2191 / \u2193 : Move     Y : Confirm"
@@ -356,6 +374,29 @@ class ExperimentUI:
         for button in buttons:
             button.pack(side="left", padx=30)
         refresh()
+        self._waiting = True
+
+    def _name_screen(self, title):
+        def submit():
+            name = safe_name(entry.get())
+            if name:
+                self._answer(name)
+            else:
+                message.configure(text="Please enter your name.")
+
+        self._show("input", title, "", "Enter : Continue", {"confirm": submit})
+        entry = tk.Entry(self.body, font=(self.font, 26), width=20, justify="center", fg=FG, relief="flat",
+                         highlightthickness=2, highlightbackground=MUTED, highlightcolor=ACCENT)
+        entry.pack(pady=20, ipady=8)
+        entry.focus_set()
+        self._button("Continue", "confirm").pack(pady=16)
+        message = tk.Label(self.body, font=(self.font, 18), bg=BG, fg=WARN)
+        message.pack()
+        self._waiting = True
+
+    def _start_screen(self, title, text):
+        self._show("input", title, "", "START : Begin", {"correct": lambda: self._answer(True)})
+        self._text(text)
         self._waiting = True
 
     def _execution_screen(self, task_name, request_correction):

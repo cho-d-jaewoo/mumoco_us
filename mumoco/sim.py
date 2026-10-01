@@ -21,14 +21,12 @@ HOME = Franka().home
 EE_LINK = 11                        # panda_grasptarget in pybullet_data's panda.urdf
 FINGERS = [9, 10]
 FINGER_OPEN, FINGER_CLOSED = 0.04, 0.0
-MARKER_COLOR = [102 / 255, 102 / 255, 102 / 255]
 DATA = pybullet_data.getDataPath()
 TABLE_HEIGHT = 0.626                # table.urdf: top surface above its base
 
 
 class Simulation:
-    """Panda next to a table. show() puts a large status label above the robot and draws the end-effector
-    trail in its color (sim_correction.py); without show() only the robot and the scene are visible."""
+    """Panda next to a table; only the robot, the scene and its objects are shown."""
 
     def __init__(self, gui=True, speed=1.0, camera=SIM_CAMERA):
         self.gui, self.speed, self.camera = gui, speed, camera
@@ -39,7 +37,6 @@ class Simulation:
         p.setTimeStep(SIM_DT)
         self.panda = p.loadURDF(os.path.join(DATA, "franka_panda/panda.urdf"), useFixedBase=True)
         self.graspable, self.held = [], None       # bodies the gripper can pick up / (body, constraint)
-        self.label, self.trail, self.color, self.last_ee = None, False, MARKER_COLOR, None
         self.time, self.wall_start, self.gripper_open = 0.0, None, True
         self.frames, self.next_frame = None, 0.0
         self.reset(HOME)
@@ -132,11 +129,6 @@ class Simulation:
             raise SystemExit("[INFO] Simulation window closed.")
         p.stepSimulation()
         self.time += SIM_DT
-        if self.trail and round(self.time / SIM_DT) % 12 == 0:       # trail at 20 Hz
-            ee = self.ee()
-            if self.last_ee is not None:
-                p.addUserDebugLine(self.last_ee, ee, self.color, lineWidth=3)
-            self.last_ee = ee
         if self.frames is not None and self.time >= self.next_frame:  # video frames at VIDEO_FPS (video time)
             self.frames.append(self.render())
             self.next_frame += self.speed / VIDEO_FPS
@@ -163,25 +155,6 @@ class Simulation:
         rgba = p.getCameraImage(width, height, view, projection, shadow=1, lightDirection=[0.5, -1.0, 2.0],
                                 renderer=p.ER_TINY_RENDERER)[2]
         return Image.fromarray(np.reshape(np.asarray(rgba, dtype=np.uint8), (height, width, 4))[:, :, :3])
-
-    def show(self, text, color):
-        print(f"[SIM] {text}")
-        self.trail, self.color = True, color
-        options = {} if self.label is None else {"replaceItemUniqueId": self.label}
-        self.label = p.addUserDebugText(text, [0.3, 0.0, 1.05], textColorRGB=color, textSize=2.0, **options)
-
-    def mark_waypoints(self, waypoints):
-        """Small numbered spheres at the end-effector position of every waypoint."""
-        p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 0)       # hide the robot jumping through them
-        sphere = p.createVisualShape(p.GEOM_SPHERE, radius=0.012, rgbaColor=[*MARKER_COLOR, 1])
-        q, gripper_open = self.q(), self.gripper_open
-        for i, wp in enumerate(waypoints, 1):
-            self.reset(wp["joint_positions"], gripper_open)
-            position = self.ee()
-            p.createMultiBody(baseMass=0, baseVisualShapeIndex=sphere, basePosition=position)
-            p.addUserDebugText(str(i), position + [0, 0, 0.03], textColorRGB=MARKER_COLOR, textSize=1.2)
-        self.reset(q, gripper_open)
-        p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1)
 
     def hold(self):
         """Keep the final pose on screen until the window is closed (or Ctrl+C)."""
@@ -260,8 +233,8 @@ def save_video(frames, path):
 
 
 def newest_correction(task_name):
-    paths = sorted((CORRECTION_DIR / task_name).glob("correction_*.json"))
-    return paths[-1] if paths else None
+    paths = list((CORRECTION_DIR / task_name).glob("*.json"))
+    return max(paths, key=lambda path: path.stat().st_mtime) if paths else None
 
 
 def load_correction(path):

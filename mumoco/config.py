@@ -47,8 +47,6 @@ SIM_DT = 1 / 240             # [s] PyBullet time step (panda-tutorial)
 SIM_GRIPPER_TIME = 1.0       # [s] simulated gripper open/close
 SIM_ARM_FORCES = [87, 87, 87, 87, 12, 12, 12]   # [Nm] Panda joint torque limits (lfc_test)
 SIM_CAMERA = {"cameraDistance": 1.6, "cameraYaw": 50.0, "cameraPitch": -30.0, "cameraTargetPosition": [0.4, 0.0, 0.3]}
-SIM_TASK_COLOR = [42 / 255, 143 / 255, 189 / 255]          # blue: following the task waypoints
-SIM_CORRECTION_COLOR = [141 / 255, 95 / 255, 211 / 255]    # purple: replaying the recorded correction
 
 # ---------------- task videos (sim_task.py) ----------------
 VIDEO_FPS = 20

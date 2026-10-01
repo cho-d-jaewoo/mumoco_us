@@ -1,13 +1,12 @@
 """Replay a task in PyBullet until the moment a recorded physical correction began, then replay the correction.
 
-    python3 sim_correction.py test                    # newest correction of task 'test'
-    python3 sim_correction.py test --correction corrections/test/correction_20260930_150108.json
+    python3 sim_correction.py pnp_spill               # newest correction of task 'pnp_spill'
+    python3 sim_correction.py pnp_spill --correction corrections/pnp_spill/pnp_spill_Johnny_20261001_153012.json
 """
 
 import argparse
 from pathlib import Path
 
-from mumoco.config import SIM_CORRECTION_COLOR, SIM_TASK_COLOR
 from mumoco.sim import (find_correction_start, load_correction, make_simulation, newest_correction, plan_task,
                         play_correction, play_task)
 from mumoco.utils import find_task_path, load_task, task_base_name
@@ -41,12 +40,11 @@ def main():
         print("[WARNING] The correction does not start on the task path; the robot jumps to its start.")
 
     sim = make_simulation(task_base_name(args.task), task["waypoints"], gui=not args.no_gui, speed=args.speed)
-    sim.mark_waypoints(task["waypoints"])
-    sim.show(f"Following task: {task['name']}", SIM_TASK_COLOR)
+    print(f"[SIM] Following task: {task['name']}")
     play_task(sim, plan, stop=(segment, t))
-    sim.show("Physical correction (recorded)", SIM_CORRECTION_COLOR)
+    print("[SIM] Physical correction (recorded)")
     play_correction(sim, correction)
-    sim.show("Correction finished", SIM_CORRECTION_COLOR)
+    print("[SIM] Correction finished")
     sim.hold()
 
 
