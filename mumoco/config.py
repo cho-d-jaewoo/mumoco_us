@@ -61,5 +61,5 @@ SCENE_CAMERAS = {
     "pnp": {"cameraDistance": 1.55, "cameraYaw": 5.0, "cameraPitch": -12.0, "cameraTargetPosition": [0.45, 0.0, 0.32]},
 }
 PNP_CUP_SCALE = 1.2          # pybullet_data mug; it stands where the gripper first closes, handle toward the robot
-PNP_TOASTER = {"x": 0.725, "y": -0.035, "scale": 0.7}   # between cup and goal: answer/spill pass above it,
-                                                         # down_too_early/straight_to_goal hit it
+PNP_TOASTER = {"x": 0.65, "y": -0.035, "scale": 1.0}    # original size, midway between cup and goal:
+                                                         # answer/spill pass above it, down_too_early/straight_to_goal hit it

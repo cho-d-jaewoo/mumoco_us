@@ -59,7 +59,7 @@ def experiment(ui):
                 return
             task = tasks[ui.choose("Select Task", [display_name(t) for t in tasks])]
             modality = ui.choose("Correction Modality", names, disabled=unavailable, back=True,
-                                 scenario=task["name"])
+                                 scenario=task["name"], subtitle=task["name"])
             if modality is None:
                 continue
             ui.status("Preparing Task", "Returning to home position...", "moving")

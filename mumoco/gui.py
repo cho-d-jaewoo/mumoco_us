@@ -102,10 +102,11 @@ class ExperimentUI:
         self._inbox.put((self._show, ("error", "Something Went Wrong", text,
                                       "The robot was stopped. Close this window and restart the program.")))
 
-    def choose(self, title, options, disabled=(), back=False, scenario=None):
+    def choose(self, title, options, disabled=(), back=False, scenario=None, subtitle=""):
         """Blocks until an enabled option is confirmed; returns its index (None = back, if allowed).
-        scenario: a task name; adds "View Scenario" (that task's video next to its answer's video)."""
-        self._inbox.put((self._list_screen, (title, options, set(disabled), back, scenario)))
+        scenario: a task name; adds "View Scenario" (that task's video next to its answer's video).
+        subtitle: shown under the title (e.g. the selected task)."""
+        self._inbox.put((self._list_screen, (title, options, set(disabled), back, scenario, subtitle)))
         return self._wait_answer()
 
     def ask_yes_no(self, title, text=""):
@@ -185,6 +186,8 @@ class ExperimentUI:
         if self._cleanup:
             self._cleanup()
             self._cleanup = None
+        self.hint.unbind("<Button-1>")
+        self.hint.configure(cursor="")
         banner, color, text_color = BANNERS[mode]
         self.banner.configure(text=banner, bg=color, fg=text_color)
         self.title.configure(text=title)
@@ -214,7 +217,7 @@ class ExperimentUI:
         label.pack(pady=8)
         return label
 
-    def _list_screen(self, title, options, disabled, back, scenario=None, sel=0):
+    def _list_screen(self, title, options, disabled, back, scenario=None, subtitle="", sel=0):
         """Highlighted list. With a scenario, a "View Scenario" button sits left of it; Left / Right move
         the focus between the button and the list, Up / Down move within the list."""
         state = {"sel": sel, "top": 0, "focus": "list"}
@@ -235,7 +238,7 @@ class ExperimentUI:
         def move(step):
             if state["focus"] == "list":
                 state["sel"] = min(max(state["sel"] + step, 0), len(options) - 1)
-                self.subtitle.configure(text="")
+                message.configure(text="")
                 refresh()
 
         def focus(where):
@@ -247,12 +250,12 @@ class ExperimentUI:
             if state["focus"] == "side":
                 view_scenario()
             elif state["sel"] in disabled:
-                self.subtitle.configure(text=f"{options[state['sel']]} correction is not implemented yet.", fg=WARN)
+                message.configure(text=f"{options[state['sel']]} correction is not implemented yet.")
             else:
                 self._answer(state["sel"])
 
         def view_scenario():
-            self._scenario_screen(scenario, lambda: self._list_screen(title, options, disabled, back, scenario,
+            self._scenario_screen(scenario, lambda: self._list_screen(title, options, disabled, back, scenario, subtitle,
                                                                       state["sel"]))
 
         def click(row):
@@ -260,14 +263,13 @@ class ExperimentUI:
             refresh()
 
         actions = {"up": lambda: move(-1), "down": lambda: move(1), "confirm": confirm, "yes": confirm}
-        hint = "\u2191 \u2193 / D-pad: move     Enter / Y: confirm"
+        hint = "\u2191 / \u2193 : Move     Y : Confirm"
         if scenario:
             actions.update(left=lambda: focus("side"), right=lambda: focus("list"), scenario=view_scenario)
-            hint = "\u2190 \u2192: View Scenario / list     " + hint
+            hint = "\u2191 / \u2193 : Move     \u2190 / \u2192 : View Scenario     Y : Confirm"
         if back:
             actions["no"] = actions["cancel"] = lambda: self._answer(None)
-            hint += "     Esc / X: back"
-        self._show("input", title, "", hint, actions)
+        self._show("input", title, subtitle, hint, actions)
         columns = tk.Frame(self.body, bg=BG)
         columns.pack()
         side = self._button("View Scenario", "scenario", columns) if scenario else None
@@ -283,15 +285,18 @@ class ExperimentUI:
             label.bind("<Button-1>", lambda event, r=row: click(r))
             label.bind("<Double-Button-1>", lambda event: confirm())
             rows.append(label)
-        self._button("Confirm", "confirm", column).pack(pady=24)
+        message = tk.Label(column, font=(self.font, 18), bg=BG, fg=WARN)   # e.g. "... not implemented yet."
+        message.pack(pady=16)
         refresh()
         self._waiting = True
 
     def _scenario_screen(self, task_name, back):
         """The task's video ("WILL act") next to its answer task's video ("SHOULD act"), looping in sync."""
         answer = answer_task_name(task_name)
-        self._show("input", "Scenario", "", "Enter / Y / Esc / X: back",
+        self._show("input", f"{task_name} Scenario", "", "X : Back",
                    {action: back for action in ("confirm", "yes", "no", "cancel")})
+        self.hint.bind("<Button-1>", lambda event: self._on_action("no"))    # mouse: click "X : Back"
+        self.hint.configure(cursor="hand2")
         self.root.update_idletasks()
         width = min((self.root.winfo_width() - 120) // 2, int((self.root.winfo_height() - 380) * 16 / 9))
         size = (max(width, 240), max(width, 240) * 9 // 16)
@@ -318,7 +323,6 @@ class ExperimentUI:
                 paths.append(task_video_path(name))
             else:
                 video.configure(text=missing)
-        self._button("Back", "confirm").pack(pady=24)
         if paths:
             try:
                 player = SyncedVideos(self.root, labels, paths, size,
