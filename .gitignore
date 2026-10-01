@@ -17,4 +17,5 @@
 !assets/
 !assets/*.urdf
 !corrections/
+!corrections/**/
 !corrections/**/*.json
