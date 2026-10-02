@@ -6,6 +6,7 @@ JointSpline, starting at home with the gripper open. The robot follows the refer
 
 import json
 import os
+import tempfile
 import time
 
 import numpy as np
@@ -13,7 +14,7 @@ import pybullet as p
 import pybullet_data
 
 from .config import (AMAX, BIT_PLATE, CORRECTION_DIR, PNP_CUP_SCALE, PNP_TOASTER, ROOT, SCENE_CAMERAS, SIM_ARM_FORCES,
-                     SIM_CAMERA, SIM_DT, SIM_GRIPPER_TIME, VIDEO_FPS, VIDEO_SIZE, VMAX)
+                     SIM_CAMERA, SIM_DT, SIM_GRIPPER_TIME, VIDEO_FPS, VIDEO_SIZE, VMAX, WTP_PLATE)
 from .franka import Franka
 from .trajectory_utils import JointSpline, task_segments
 from .utils import find_task_path, load_task
@@ -29,15 +30,18 @@ TABLE_HEIGHT = 0.626                # table.urdf: top surface above its base
 class Simulation:
     """Panda next to a table; only the robot, the scene and its objects are shown."""
 
-    def __init__(self, gui=True, speed=1.0, camera=SIM_CAMERA):
+    def __init__(self, gui=True, speed=1.0, camera=SIM_CAMERA, deformable=False):
         self.gui, self.speed, self.camera = gui, speed, camera
         p.connect(p.GUI if gui else p.DIRECT)
+        if deformable:                              # soft bodies (cloth); only scenes that need them
+            p.resetSimulation(p.RESET_USE_DEFORMABLE_WORLD)
         p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
         p.resetDebugVisualizerCamera(**camera)
         p.setGravity(0, 0, -9.81)
         p.setTimeStep(SIM_DT)
         self.panda = p.loadURDF(os.path.join(DATA, "franka_panda/panda.urdf"), useFixedBase=True)
-        self.graspable, self.held = [], None       # bodies the gripper can pick up / (body, constraint)
+        self.graspable, self.held = [], None       # bodies the gripper can pick up / (body, [constraints])
+        self.cloths = {}                           # soft cloth the gripper can pick up -> prop under it (or None)
         self.time, self.wall_start, self.gripper_open = 0.0, None, True
         self.frames, self.next_frame = None, 0.0
         self.reset(HOME)
@@ -97,7 +101,8 @@ class Simulation:
         self.gripper_open = open_
         closed = FINGER_CLOSED
         if changed and open_ and self.held:
-            p.removeConstraint(self.held[1])
+            for constraint in self.held[1]:
+                p.removeConstraint(constraint)
             self.held = None
         elif changed and not open_:
             self.held = self._attach()
@@ -122,7 +127,15 @@ class Simulation:
                                                 parentFramePosition=rel_pos, childFramePosition=[0, 0, 0],
                                                 parentFrameOrientation=rel_orn)
                 p.changeConstraint(constraint, maxForce=200)
-                return body, constraint
+                return body, [constraint]
+        for cloth, prop in self.cloths.items():    # soft cloth: hold the nodes near the fingertips
+            nodes = np.array(p.getMeshData(cloth, -1, flags=p.MESH_DATA_SIMULATION_MESH)[1])
+            near = np.flatnonzero(np.linalg.norm(nodes - hand, axis=1) < CLOTH["reach"])
+            if len(near):
+                if prop is not None:               # the prop is no longer needed (and would show once uncovered)
+                    p.removeBody(prop)
+                    self.cloths[cloth] = None
+                return cloth, [p.createSoftBodyAnchor(cloth, int(i), self.panda, EE_LINK) for i in near]
         return None
 
     def step(self):
@@ -240,13 +253,80 @@ def bit_scene(sim, task, answer):
     sim.graspable.append(bread)
 
 
-SCENES = {"pnp": pnp_scene, "bit": bit_scene}
+CLOTH = {"side": 0.26, "nodes": 17,                    # [m] square handkerchief, nodes per side
+         "hump": 0.05, "radius": 0.03, "length": 0.12,     # laid over a round hump (cave) this high / wide / long
+         "grip": 0.01, "reach": 0.025,                     # held 1 cm below the hump top; nodes this close are held
+         "stiffness": 120, "bending": 0.02, "damping": 0.03, "mass": 0.05}  # floppy fabric (stiffness/mass per node
+                                                                             # must stay low enough to be stable)
+
+
+def cloth_mesh(side, n, hump, radius):
+    """OBJ file of a square cloth draped over a round hump that runs along x through its center."""
+    center = hump - radius                         # hump (cylinder) axis height
+    xs = np.linspace(-side / 2, side / 2, n)
+
+    def height(y):                                 # over the cylinder, then down its side to the table
+        if abs(y) <= radius:
+            return center + np.sqrt(radius**2 - y**2)
+        return max(0.0, center - 2.0 * (abs(y) - radius))
+
+    vertices = [(x, y, height(y) + 0.004) for y in xs for x in xs]
+    faces = []
+    for j in range(n - 1):
+        for i in range(n - 1):
+            a = j * n + i + 1                       # OBJ indices start at 1
+            faces += [(a, a + 1, a + n + 1), (a, a + n + 1, a + n)]
+    with tempfile.NamedTemporaryFile("w", suffix=".obj", delete=False) as obj:
+        obj.writelines(f"v {x:.4f} {y:.4f} {z:.4f}\n" for x, y, z in vertices)
+        obj.writelines(f"f {a} {b} {c}\n" for a, b, c in faces)
+    return obj.name
+
+
+def wtp_scene(sim, task, answer):
+    """Wipe the plate: a light, floppy handkerchief laid over a small round hump (like a cave) where the
+    answer task grasps it, so the fingers can pinch its top, and a white plate where the answer task wipes.
+    The hump is an invisible cylinder under the cloth, removed when the cloth is grasped."""
+    grasp = np.array(sim.hand_pose(grasp_and_release(answer)[0])[0])
+    table = grasp[2] + CLOTH["grip"] - CLOTH["hump"]
+    sim.add_table(table)
+    plate = dict(radius=WTP_PLATE["radius"])
+    p.createMultiBody(baseMass=0, baseCollisionShapeIndex=p.createCollisionShape(p.GEOM_CYLINDER, height=0.01, **plate),
+                      baseVisualShapeIndex=p.createVisualShape(p.GEOM_CYLINDER, length=0.01, rgbaColor=[0.95, 0.95, 0.93, 1],
+                                                               **plate),
+                      basePosition=[WTP_PLATE["x"], WTP_PLATE["y"], table + 0.005])
+    color = np.array([0.55, 0.72, 0.88])
+    along_x = p.getQuaternionFromEuler([0, np.pi / 2, 0])
+    hump = dict(radius=CLOTH["radius"])
+    prop = p.createMultiBody(baseMass=0,
+                             baseCollisionShapeIndex=p.createCollisionShape(p.GEOM_CYLINDER, height=CLOTH["length"], **hump),
+                             baseVisualShapeIndex=p.createVisualShape(p.GEOM_CYLINDER, length=CLOTH["length"],
+                                                                      rgbaColor=[*(color * 0.6), 1], **hump),  # cave shade
+                             basePosition=[grasp[0], grasp[1], table + CLOTH["hump"] - CLOTH["radius"]],
+                             baseOrientation=along_x)
+    sim.no_collision(prop)
+    path = cloth_mesh(CLOTH["side"], CLOTH["nodes"], CLOTH["hump"], CLOTH["radius"])
+    cloth = p.loadSoftBody(path, basePosition=[grasp[0], grasp[1], table], mass=CLOTH["mass"], useNeoHookean=0,
+                           useBendingSprings=1, useMassSpring=1, springElasticStiffness=CLOTH["stiffness"],
+                           springDampingStiffness=CLOTH["damping"], springBendingStiffness=CLOTH["bending"],
+                           springDampingAllDirections=1, useSelfCollision=0, frictionCoeff=0.3, useFaceContact=1,
+                           collisionMargin=0.003)
+    os.remove(path)
+    p.changeVisualShape(cloth, -1, rgbaColor=[*color, 1], flags=p.VISUAL_SHAPE_DOUBLE_SIDED)
+    sim.no_collision(cloth)                        # held through anchors; finger contact would blow the cloth up
+    p.changeDynamics(cloth, -1, activationState=p.ACTIVATION_STATE_DISABLE_SLEEPING)   # a resting cloth would freeze
+    sim.cloths[cloth] = prop
+    p.setPhysicsEngineParameter(numSubSteps=4)    # (after loading the cloth) its springs need smaller steps
+    sim.wait(1.0)                                  # let the cloth drape over the hump before the video starts
+
+
+SCENES = {"pnp": pnp_scene, "bit": bit_scene, "wtp": wtp_scene}
+DEFORMABLE = {"wtp"}                               # scenes with soft bodies
 
 
 def make_simulation(base_name, waypoints, gui=True, speed=1.0):
     """Scene for the task's base name (pnp_spill -> "pnp"); scenes get the task and the base's answer task.
     Robot and table only for other tasks."""
-    sim = Simulation(gui, speed, SCENE_CAMERAS.get(base_name, SIM_CAMERA))
+    sim = Simulation(gui, speed, SCENE_CAMERAS.get(base_name, SIM_CAMERA), deformable=base_name in DEFORMABLE)
     answer_path = find_task_path(f"{base_name}_answer")
     answer = load_task(answer_path)["waypoints"] if answer_path else waypoints
     if base_name in SCENES and not all(w["gripper_open"] for w in answer):

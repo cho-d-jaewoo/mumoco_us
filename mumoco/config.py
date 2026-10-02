@@ -59,9 +59,11 @@ VIDEO_HOLD = (0.8, 1.5)      # [s] still frames before the motion starts and aft
 # Camera: side view with the robot on the left and the task area on the right.
 SCENE_CAMERAS = {
     "pnp": {"cameraDistance": 1.55, "cameraYaw": 5.0, "cameraPitch": -12.0, "cameraTargetPosition": [0.45, 0.0, 0.32]},
+    "wtp": {"cameraDistance": 1.35, "cameraYaw": -25.0, "cameraPitch": -40.0, "cameraTargetPosition": [0.5, 0.0, 0.2]},   # higher, whole arm in view
     "bit": {"cameraDistance": 1.45, "cameraYaw": -22.0, "cameraPitch": -40.0, "cameraTargetPosition": [0.46, 0.0, 0.24]},   # higher, from the robot side: toaster does not hide the plate
 }
 PNP_CUP_SCALE = 1.2          # pybullet_data mug; it stands where the gripper first closes, handle toward the robot
 PNP_TOASTER = {"x": 0.65, "y": -0.035, "scale": 1.0}    # original size, midway between cup and goal:
                                                          # answer/spill pass above it, down_too_early/straight_to_goal hit it
 BIT_PLATE = {"x": 0.71, "y": 0.20, "radius": 0.09}   # blue plate where bit_to_the_plate releases the bread
+WTP_PLATE = {"x": 0.69, "y": -0.04, "radius": 0.12}  # white plate under the area wtp_answer wipes
