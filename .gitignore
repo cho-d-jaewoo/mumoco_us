@@ -6,6 +6,7 @@
 !record_tasks.py
 !sim_task.py
 !sim_correction.py
+!microphone_test.py
 !mumoco/
 !mumoco/*.py
 !tasks/
