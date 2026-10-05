@@ -34,6 +34,10 @@ BANNERS = {"wait": ("PLEASE WAIT", LIGHT_GRAY, DARK_GRAY),       # mode: (text, 
            "error": ("ERROR", PURPLE, WHITE)}
 FONTS = ("Palatino Linotype", "Palatino", "P052", "TeX Gyre Pagella", "URW Palladio L",
          "DejaVu Sans")                                             # first installed one is used
+CORRECTION_SCREENS = {"physical": ("Physical Correction", "Press the External Activation Switch\nand guide the robot."),
+                      "language": ("Language Correction", "Tell the robot what it should do\nby speaking into the microphone."),
+                      "multimodal": ("Multimodal Correction", "Press the External Activation Switch, guide the robot\n"
+                                                              "and tell it what it should do through the microphone.")}
 VISIBLE_ITEMS = 6            # list rows shown at once (the list scrolls with the selection)
 POLL_MS = 20
 
@@ -129,11 +133,12 @@ class ExperimentUI:
         """Task screen; START / Ctrl+C / the button call request_correction() once."""
         self._inbox.put((self._execution_screen, (task_name, request_correction)))
 
-    def show_correction(self):
-        """Correction screen; call only once the robot really is in correction mode."""
+    def show_correction(self, modality="physical"):
+        """Correction screen (modality: physical / language / multimodal); call only once the robot really
+        is in correction mode (language: stopped, microphone recording)."""
         while self.pop_commands():
             pass
-        self._inbox.put((self._correction_screen, ()))
+        self._inbox.put((self._correction_screen, (modality,)))
 
     def pop_commands(self):
         """Correction commands entered since the last call (never blocks)."""
@@ -409,17 +414,19 @@ class ExperimentUI:
         self._text("To correct the robot, press START.",
                    size=18)
 
-    def _correction_screen(self):
+    def _correction_screen(self, modality):
         def finish():
             self._actions = {}
             self._commands.put("finish")
             info.configure(text="Finishing correction...", fg=WARN)
 
-        actions = {"open": lambda: self._commands.put("open"), "close": lambda: self._commands.put("close"),
-                   "correct": finish}                    # START again (or Ctrl+C) ends the correction
-        self._show("correction", "Physical Correction",
-                   "Press the External Activation Switch\nand guide the robot.", "", actions)
-        self._text("A :  Open Gripper        B :  Close Gripper", size=20)
+        title, text = CORRECTION_SCREENS[modality]
+        actions = {"correct": finish}                    # START again (or Ctrl+C) ends the correction
+        if modality != "language":                       # the gripper is part of the physical correction
+            actions.update(open=lambda: self._commands.put("open"), close=lambda: self._commands.put("close"))
+        self._show("correction", title, text, "", actions)
+        if modality != "physical":
+            self._text("\u25cf  Microphone is recording", size=20, color=WARN)
+        if modality != "language":
+            self._text("A :  Open Gripper        B :  Close Gripper", size=20)
         info = self._text("When you are done, press START again.", size=18)
-        row = tk.Frame(self.body, bg=BG)
-        row.pack(pady=20)

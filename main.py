@@ -1,52 +1,89 @@
-"""Experiment GUI: run a saved task and record physical corrections.
+"""Experiment GUI: run a saved task and record physical, language or multimodal corrections.
 
 Flow: connect -> home -> user ID -> select task -> select modality -> home -> instructions
-      -> START: execute -> START: physical correction -> START: finish -> save? -> home -> select task ...
+      -> START: execute -> START: correction -> START: finish -> (speech to text) -> save? -> home -> select task ...
+Correction: physical = guide the robot; language = the robot stands still while the microphone records;
+multimodal = guide the robot while the microphone records.
 A task/modality pair is completed once its correction is saved (this session only); completed pairs,
 and tasks with all modalities completed, can no longer be selected.
 """
 
 from mumoco.gui import ExperimentUI
-from mumoco.utils import Robot, execute_with_physical_correction, load_tasks, save_correction
+from mumoco.utils import Robot, execute_with_correction, load_tasks, save_correction
 
 
 def display_name(task):
     return task["name"].replace("_", " ").title()
 
 
-def physical_only(robot, task, ui, user):
-    """Returns (title of the next screen, whether a correction was saved)."""
+def load_voice():
+    """(Microphone, Transcriber), or None if either is missing (the language modalities are then unavailable)."""
+    try:
+        from mumoco.microphone import Microphone, Transcriber
+        return Microphone(), Transcriber()
+    except Exception as e:
+        print(f"[WARNING] Microphone / Whisper not available ({type(e).__name__}: {e}). "
+              "Language-Only and Multimodal are disabled.")
+        return None
+
+
+def correct_task(robot, task, ui, user, modality, voice):
+    """Run the task and record one correction (modality: physical / language / multimodal).
+    Returns (title of the next screen, whether a correction was saved)."""
+    mic, transcriber = voice if modality != "physical" else (None, None)
+
     def request_correction():
         robot.correction_requested = True                # same flag as Ctrl+C -> move_joint -> guide()
 
     shown = []
 
-    def tick():                                          # called by robot.guide() in correction mode
+    def tick():                                          # called by robot.guide() / robot.hold() in correction mode
         if not shown:
-            ui.show_correction()
+            ui.show_correction(modality)
             shown.append(True)
         for command in ui.pop_commands():
             if command == "finish":
-                ui.status("Physical Correction", "Finishing correction...")
+                ui.status("Correction", "Finishing correction...")
                 return True
-            robot.request_gripper(command == "open")
+            robot.request_gripper(command == "open")     # language: the screen sends no gripper commands
         return False
 
+    def correct():                                       # the robot has just stopped
+        samples = []
+        if mic:
+            mic.start()                                  # before guide(): speech while it switches modes counts
+        try:
+            if modality == "language":
+                robot.hold(tick)
+            else:
+                robot.guide(lambda t, state, gripper_open: samples.append((t, state, gripper_open)), tick)
+        finally:
+            recording = mic.stop() if mic else None
+        return samples, recording
+
     ui.show_execution(display_name(task), request_correction)
-    samples = execute_with_physical_correction(robot, task["waypoints"], tick)
-    if samples is None:
+    result = execute_with_correction(robot, task["waypoints"], correct)
+    if result is None:
         return "Task Completed", False
-    if not ui.ask_yes_no("Save Correction?"):
+    samples, recording = result
+    speech, text = None, ""
+    if mic:
+        if recording is None:
+            text = "No audio was recorded."
+        else:
+            ui.status("Processing Speech", "Converting your speech to text...")
+            speech = transcriber.transcribe(recording)
+            print(f'[INFO] Speech: "{speech["text"]}"')
+            text = f'You said:\n"{speech["text"]}"' if speech["text"] else "No speech was recognized."
+    if not ui.ask_yes_no("Save Correction?", text):
         return "Correction Discarded", False
     ui.status("Saving Correction", "Please wait...")
-    if save_correction(task["name"], "physical", samples, user) is None:
+    if save_correction(task["name"], modality, user, samples, speech, recording) is None:
         return "Nothing to Save", False
     return "Correction Saved", True
 
 
-# Implement Language-Only / Multimodal as functions(robot, task, ui, user) -> (next title, saved)
-# and register them here.
-MODALITIES = {"Physical-Only": physical_only, "Language-Only": None, "Multimodal": None}
+MODALITIES = {"Physical-Only": "physical", "Language-Only": "language", "Multimodal": "multimodal"}
 
 # Shown before each run; the participant presses START to begin. {task} is the task's display name.
 INSTRUCTIONS = {
@@ -74,14 +111,18 @@ INSTRUCTIONS = {
 def experiment(ui):
     ui.status("Robot Initialization", "Connecting to robot...\n\nArm: waiting\nGripper: waiting")
     robot = Robot(should_stop=lambda: ui.closing)
+    voice = None
     try:
-        ui.status("Robot Initialization", "Arm: Connected\nGripper: Connected\n\nReturning to home...", "moving")
+        ui.status("Robot Initialization", "Arm: Connected\nGripper: Connected\n\nLoading speech recognition...")
+        voice = load_voice()
+        ui.status("Robot Initialization", "Arm: Connected\nGripper: Connected\n"
+                  f"Microphone: {'Ready' if voice else 'Not available'}\n\nReturning to home...", "moving")
         robot.go_home()
         user = ui.ask_user_id()
         print(f"[INFO] User ID: {user}")
         completed = set()                                # (task name, modality) with a saved correction
         names = list(MODALITIES)
-        unavailable = [i for i, name in enumerate(names) if MODALITIES[name] is None]
+        unavailable = [] if voice else [i for i, name in enumerate(names) if MODALITIES[name] != "physical"]
         while True:
             tasks = load_tasks()
             if not tasks:
@@ -100,12 +141,14 @@ def experiment(ui):
             ui.status("Preparing Task", "Returning to home position...", "moving")
             robot.go_home()
             ui.wait_for_start("Instructions", INSTRUCTIONS[names[modality]].format(task=display_name(task)))
-            result, saved = MODALITIES[names[modality]](robot, task, ui, user)
+            result, saved = correct_task(robot, task, ui, user, MODALITIES[names[modality]], voice)
             if saved:
                 completed.add((task["name"], names[modality]))
             ui.status(result, "Returning to home position...", "moving")
             robot.go_home()
     finally:
+        if voice:
+            voice[0].close()
         robot.close()
 
 

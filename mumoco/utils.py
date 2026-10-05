@@ -8,6 +8,7 @@ import signal
 import socket
 import sys
 import time
+import wave
 from contextlib import contextmanager
 from datetime import datetime
 
@@ -192,7 +193,8 @@ class Robot:
         """Correction mode of arm_control_cjw: "c" -> operator guides the robot -> "v".
 
         Calls record(t, state, gripper_open) for EVERY arm state message the NUC streams
-        (franka.listen2robot would keep only the newest). state = {"q", "O_F", "J"} as in franka.py;
+        (franka.listen2robot would keep only the newest); t = time.monotonic() at receipt, the microphone's
+        clock. state = {"q", "O_F", "J"} as in franka.py;
         gripper_open is the newest measured gripper state when that arm message is read.
         tick() is called after every socket read (must not block); guiding ends when it returns True.
         """
@@ -202,7 +204,7 @@ class Robot:
         time.sleep(SETTLE_TIME)                         # let an interrupted motion ramp down
         self.franka.readState(self.conn)                # drop states received before recording
         self.update_gripper()
-        buf, t0 = "", time.monotonic()
+        buf = ""
         while True:
             self._check_stop()
             ready = select.select([self.conn, self.grip], [], [], 0.1)[0]
@@ -213,7 +215,7 @@ class Robot:
                 if not data:
                     raise ConnectionError("Arm controller closed the connection.")
                 *messages, buf = (buf + data.decode(errors="ignore")).split("s,")
-                t = time.monotonic() - t0
+                t = time.monotonic()
                 for m in messages:
                     v = m.split(",")[:-1]
                     if len(v) == STATE_LENGTH:          # truncated messages are skipped
@@ -226,6 +228,18 @@ class Robot:
         time.sleep(MODE_SWITCH_TIME)
         self.in_correction = False
         print("[CORRECTION] Done. Robot is back in velocity control.")
+
+    def hold(self, tick):
+        """Stand still (zero joint velocity, velocity control) until tick() returns True: the language
+        correction. Keeps reading the state stream, as move_joint does."""
+        while True:
+            self._check_stop()
+            t0 = time.monotonic()
+            self.franka.send2robot(self.conn, np.zeros(7))
+            self.franka.readState(self.conn)
+            if tick():
+                break
+            time.sleep(max(0.0, 1 / HZ - (time.monotonic() - t0)))
 
     def close(self):
         if not self.in_correction:                       # in correction mode the NUC only accepts 'v'/'c'
@@ -333,53 +347,90 @@ def save_task(name, waypoints):
 
 
 # ---------------- physical corrections (dense) ----------------
-def execute_with_physical_correction(robot, waypoints, tick):
-    """Run the task; once robot.correction_requested is set (Ctrl+C, GUI, joystick) switch to
-    correction mode and return every recorded (t, state, gripper_open) sample.
-    Returns None if the task finished without correction. tick: see Robot.guide."""
-    samples = []
+def execute_with_correction(robot, waypoints, correct):
+    """Run the task; once robot.correction_requested is set (Ctrl+C, GUI, joystick) the task stops where
+    it is and correct() runs; returns its result. Returns None if the task finished without correction."""
     try:
         robot.execute_task(waypoints)
         return None
     except CorrectionRequested:
         print("\n[INFO] Correction requested. Task execution stopped.")
-        robot.guide(lambda t, state, gripper_open: samples.append((t, state, gripper_open)), tick)
-        return samples
+        return correct()
     finally:
         robot.correction_requested = False
 
 
-def save_correction(task_name, modality, samples, user_id):
-    """Slice the inactive head/tail and save the dense correction trajectory; returns the path (None if nothing)."""
-    interval = active_interval([s["q"] for _, s, _ in samples], [g for _, _, g in samples])
-    if interval is None:
-        print("[WARNING] No motion or gripper action detected. Nothing saved.")
+def speech_start(speech):
+    """time.monotonic() of the first spoken word, or None if nothing was said."""
+    words = [w for s in speech["segments"] for w in s["words"]] if speech else []
+    return min(w["start"] for w in words) if words else None
+
+
+def save_correction(task_name, modality, user_id, samples=(), speech=None, recording=None):
+    """Save one correction in corrections/<task>/<CORRECTION_FOLDERS[modality]>/; returns the path (None if nothing happened).
+
+    samples: (t, state, gripper_open) from Robot.guide, sliced to the active interval (motion / gripper change).
+    speech: Transcriber.transcribe(recording); recording: Microphone.stop(), saved in recordings/ as WAV.
+    All times are stored relative to the first input of either kind: 0 s = first motion or first spoken word."""
+    interval = active_interval([s["q"] for _, s, _ in samples], [g for _, _, g in samples]) if samples else None
+    spoken = speech_start(speech)
+    if interval is None and spoken is None:
+        print("[WARNING] No motion, gripper action or speech detected. Nothing saved.")
         return None
-    start, end = interval
-    t_start = samples[start][0]
-    trajectory = [{"t": round(t - t_start, 4), "q": s["q"].tolist(), "O_F": s["O_F"].tolist(),
-                   "J": s["J"].tolist(), "gripper_open": g} for t, s, g in samples[start:end + 1]]
+    start, end = interval or (0, -1)
+    t_zero = min(([samples[start][0]] if interval else []) + ([spoken] if spoken is not None else []))
+    rel = lambda t: round(t - t_zero, 4)
+    trajectory = [{"t": rel(t), "q": s["q"].tolist(), "O_F": s["O_F"].tolist(), "J": s["J"].tolist(),
+                   "gripper_open": g} for t, s, g in samples[start:end + 1]]
     now = datetime.now()
-    data = {
-        "task_name": task_name,
-        "modality": modality,
-        "recorded_at": now.isoformat(timespec="seconds"),
-        "num_recorded_samples": len(samples),
-        "num_samples": len(trajectory),
-        "state_rate_hz": STATE_HZ,
-        "fields": {
-            "t": "[s] host receive time since the first saved sample (messages carry no NUC timestamp)",
+    folder = CORRECTION_DIR / task_name / CORRECTION_FOLDERS[modality]
+    name = f"{task_error_name(task_name)}_{user_id}_{modality}_{now:%Y%m%d_%H%M%S}"
+    data = {"task_name": task_name, "modality": modality, "recorded_at": now.isoformat(timespec="seconds")}
+    fields = {"t": "[s] host receive time since the first input (first motion / gripper change or first spoken "
+                   "word, whichever came first); messages carry no NUC timestamp"}
+    if modality != "language":
+        data.update(num_recorded_samples=len(samples), num_samples=len(trajectory), state_rate_hz=STATE_HZ)
+        fields.update({
             "q": "[rad] measured joint positions (robot_state.q)",
             "O_F": "estimated external wrench in base frame (robot_state.O_F_ext_hat_K)",
             "J": "6x7 zero Jacobian at the end effector",
             "gripper_open": "measured gripper state (width > 0.0725 m), newest value when the arm state was read",
-        },
-        "trajectory": trajectory,
-    }
-    folder = CORRECTION_DIR / task_name
+        })
+    if modality != "physical":
+        fields.update({
+            "language": "Whisper transcript; segment and word start/end [s] on the time axis of t",
+            "audio": "whole recording (correction start to end) in recordings/; start = [s] of its first sample",
+        })
+    data["fields"] = fields
+    if modality != "language":
+        data["trajectory"] = trajectory
+    if modality != "physical":
+        data["language"] = {"text": speech["text"] if speech else "", "segments": [
+            {"start": rel(s["start"]), "end": rel(s["end"]), "text": s["text"],
+             "words": [{"start": rel(w["start"]), "end": rel(w["end"]), "word": w["word"]} for w in s["words"]]}
+            for s in (speech["segments"] if speech else [])]}
+        if recording is not None:
+            audio_path = folder / "recordings" / f"{name}.wav"
+            save_wav(audio_path, recording["audio"], recording["sample_rate"])
+            data["audio"] = {"file": f"recordings/{audio_path.name}", "start": rel(recording["t_start"]),
+                             "sample_rate": recording["sample_rate"],
+                             "duration": round(len(recording["audio"]) / recording["sample_rate"], 3)}
     folder.mkdir(parents=True, exist_ok=True)
-    path = folder / f"{task_error_name(task_name)}_{user_id}_{modality}_{now:%Y%m%d_%H%M%S}.json"
+    path = folder / f"{name}.json"
     path.write_text(json.dumps(data))
-    print(f"[INFO] Correction saved: {path.relative_to(ROOT)} "
-          f"({len(trajectory)} of {len(samples)} samples, {trajectory[-1]['t']:.1f} s)")
+    summary = [f"{len(trajectory)} of {len(samples)} samples, {trajectory[0]['t']:.1f}-{trajectory[-1]['t']:.1f} s"
+               ] if trajectory else []
+    if spoken is not None:
+        summary.append(f"speech from {rel(spoken):.1f} s")
+    print(f"[INFO] Correction saved: {path.relative_to(ROOT)} ({', '.join(summary)})")
     return path
+
+
+def save_wav(path, audio, sample_rate):
+    """float32 mono in [-1, 1] -> 16-bit PCM WAV."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(sample_rate)
+        f.writeframes((np.clip(audio, -1, 1) * 32767).astype("<i2").tobytes())

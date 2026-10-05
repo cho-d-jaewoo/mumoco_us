@@ -20,3 +20,4 @@
 !corrections/
 !corrections/**/
 !corrections/**/*.json
+!corrections/**/*.wav

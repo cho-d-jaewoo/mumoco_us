@@ -8,6 +8,8 @@ TASK_DIR = ROOT / "tasks"                 # tasks shown in the experiment
 ANSWER_DIR = ROOT / "task_answers"        # <base>_answer.json: how each task should be done
 VIDEO_DIR = ROOT / "task_videos"          # <task>.webp, made by sim_task.py, shown by "View Scenario"
 CORRECTION_DIR = ROOT / "corrections"
+# corrections/<task>/<folder>/ per modality; language and multimodal keep the audio in <folder>/recordings/
+CORRECTION_FOLDERS = {"physical": "physical_only", "language": "language_only", "multimodal": "multimodal"}
 
 # ---------------- connection (arm_control_cjw.cpp / gripper_control_cjw.cpp) ----------------
 ARM_PORT = 8080

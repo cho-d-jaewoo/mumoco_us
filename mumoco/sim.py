@@ -13,8 +13,8 @@ import numpy as np
 import pybullet as p
 import pybullet_data
 
-from .config import (AMAX, BIT_PLATE, CORRECTION_DIR, PNP_CUP_SCALE, PNP_TOASTER, ROOT, SCENE_CAMERAS, SIM_ARM_FORCES,
-                     SIM_CAMERA, SIM_DT, SIM_GRIPPER_TIME, VIDEO_FPS, VIDEO_SIZE, VMAX, WTP_PLATE)
+from .config import (AMAX, BIT_PLATE, CORRECTION_DIR, CORRECTION_FOLDERS, PNP_CUP_SCALE, PNP_TOASTER, ROOT,
+                     SCENE_CAMERAS, SIM_ARM_FORCES, SIM_CAMERA, SIM_DT, SIM_GRIPPER_TIME, VIDEO_FPS, VIDEO_SIZE, VMAX, WTP_PLATE)
 from .franka import Franka
 from .trajectory_utils import JointSpline, task_segments
 from .utils import find_task_path, load_task
@@ -369,7 +369,10 @@ def save_video(frames, path):
 
 
 def newest_correction(task_name):
-    paths = list((CORRECTION_DIR / task_name).glob("*.json"))
+    """Newest physical or multimodal correction of the task that has a trajectory (a multimodal one may be speech only)."""
+    paths = [path for folder in (CORRECTION_FOLDERS["physical"], CORRECTION_FOLDERS["multimodal"])
+             for path in (CORRECTION_DIR / task_name / folder).glob("*.json")
+             if json.loads(path.read_text()).get("trajectory")]
     return max(paths, key=lambda path: path.stat().st_mtime) if paths else None
 
 

@@ -1,7 +1,7 @@
 """Replay a task in PyBullet until the moment a recorded physical correction began, then replay the correction.
 
-    python3 sim_correction.py pnp_spill               # newest correction of task 'pnp_spill'
-    python3 sim_correction.py pnp_spill --correction corrections/pnp_spill/pnp_spill_Johnny_20261001_153012.json
+    python3 sim_correction.py pnp_spill               # newest physical / multimodal correction of task 'pnp_spill'
+    python3 sim_correction.py pnp_spill --correction corrections/pnp_spill/physical_only/spill_1234_physical_20261001_153012.json
 """
 
 import argparse
@@ -25,7 +25,7 @@ def main():
     task = load_task(path)
     correction_path = args.correction or newest_correction(args.task)
     if correction_path is None:
-        parser.error(f"no corrections for task '{args.task}' in corrections/{args.task}/")
+        parser.error(f"no physical or multimodal corrections for task '{args.task}' in corrections/{args.task}/")
     correction = load_correction(correction_path)
     if correction["task_name"] != args.task:
         print(f"[WARNING] The correction was recorded for task '{correction['task_name']}'.")
