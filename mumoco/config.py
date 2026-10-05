@@ -43,9 +43,10 @@ JOY_NAV_AXIS_X = 0           # left stick left-right (joystick_example.py)
 JOY_NAV_THRESHOLD = 0.5
 
 # ---------------- microphone / speech-to-text (deploy.py VoiceTaskRecorder) ----------------
+MIC_NAME = "JLAB TALK"       # part of the microphone name (`python3 -m sounddevice` lists the devices)
 MIC_SAMPLE_RATE = 16_000     # [Hz] Whisper's input rate
 WHISPER_MODEL = "turbo"      # deploy.py default (GPU); small.en / base.en for lower latency or CPU
-WHISPER_LANGUAGE = "en"      # None = auto-detect (unreliable on short clips)
+WHISPER_LANGUAGE = "en"
 
 # ---------------- PyBullet simulation (sim_task.py, sim_correction.py) ----------------
 SIM_DT = 1 / 240             # [s] PyBullet time step (panda-tutorial)

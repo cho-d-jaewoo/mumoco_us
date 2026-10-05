@@ -6,23 +6,52 @@ and physical corrections can later be put on one timeline.
 Run `python3 microphone_test.py` (from the repository root) to check the microphone and Whisper.
 """
 
+import os
+import re
+import subprocess
 import time
 
 import numpy as np
 
-from .config import MIC_SAMPLE_RATE, WHISPER_LANGUAGE, WHISPER_MODEL
+from .config import MIC_NAME, MIC_SAMPLE_RATE, WHISPER_LANGUAGE, WHISPER_MODEL
+
+
+def _key(text):
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def pulse_source(name):
+    """Sound-server (PipeWire / PulseAudio) source of the microphone whose name contains `name`, or None."""
+    try:
+        out = subprocess.run(["pactl", "list", "short", "sources"], capture_output=True, text=True, timeout=3).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    sources = [line.split("\t")[1] for line in out.splitlines() if len(line.split("\t")) > 1]
+    return next((s for s in sources if _key(name) in _key(s) and not s.endswith(".monitor")), None)
 
 
 class Microphone:
     """start() opens the input stream, stop() closes it and returns the recording:
-    {"t_start": monotonic time of the first sample, "sample_rate", "audio": float32 mono, "warnings"}."""
+    {"t_start": monotonic time of the first sample, "sample_rate": 16 kHz, "audio": float32 mono, "warnings"}."""
 
-    def __init__(self, device=None, sample_rate=MIC_SAMPLE_RATE):
+    def __init__(self, name=MIC_NAME):
         import sounddevice as sd                         # here, so robot-only scripts do not need it
         self.sd = sd
-        self.device, self.sample_rate = device, sample_rate
+        self.device, self.rate, self.channels = self._find(name)
         self.stream = None
         self.chunks, self.warnings, self.t_start = [], [], None
+
+    def _find(self, name):
+        """(device, sample rate, channels). Through the sound server if it has the microphone: it holds
+        the hw: device (PortAudio "Device unavailable") and resamples to 16 kHz. Else the hw: device itself."""
+        source = pulse_source(name)
+        if source and any(d["name"] == "pulse" for d in self.sd.query_devices()):
+            os.environ["PULSE_SOURCE"] = source          # the "pulse" ALSA device records from this source
+            print(f"[INFO] Microphone: {source} (via sound server)")
+            return "pulse", MIC_SAMPLE_RATE, 1
+        info = self.sd.query_devices(name, "input")      # ValueError if no input device has this name
+        print(f"[INFO] Microphone: {info['name']}")
+        return info["index"], int(info["default_samplerate"]), info["max_input_channels"]
 
     @property
     def recording(self):
@@ -30,7 +59,7 @@ class Microphone:
 
     def _callback(self, indata, frames, _time_info, status):   # PortAudio thread
         if self.t_start is None:                         # this block was captured during the last frames/rate s
-            self.t_start = time.monotonic() - frames / self.sample_rate
+            self.t_start = time.monotonic() - frames / self.rate
         if status:
             self.warnings.append(str(status))
         self.chunks.append(indata[:, 0].copy())
@@ -39,7 +68,7 @@ class Microphone:
         if self.recording:
             return
         self.chunks, self.warnings, self.t_start = [], [], None
-        self.stream = self.sd.InputStream(samplerate=self.sample_rate, channels=1, dtype="float32",
+        self.stream = self.sd.InputStream(samplerate=self.rate, channels=self.channels, dtype="float32",
                                           device=self.device, callback=self._callback)
         self.stream.start()
 
@@ -52,8 +81,11 @@ class Microphone:
         self.stream = None
         if not self.chunks:
             return None
-        return {"t_start": self.t_start, "sample_rate": self.sample_rate,
-                "audio": np.concatenate(self.chunks), "warnings": self.warnings}
+        audio = np.concatenate(self.chunks)
+        if self.rate != MIC_SAMPLE_RATE:                 # hw: device at its own rate -> Whisper's 16 kHz
+            t = np.arange(len(audio)) / self.rate
+            audio = np.interp(np.arange(0, t[-1], 1 / MIC_SAMPLE_RATE), t, audio).astype(np.float32)
+        return {"t_start": self.t_start, "sample_rate": MIC_SAMPLE_RATE, "audio": audio, "warnings": self.warnings}
 
     def close(self):
         self.stop()
@@ -77,7 +109,7 @@ class Transcriber:
         self.fp16 = self.model.device.type == "cuda"
 
     def transcribe(self, recording):
-        if recording["sample_rate"] != 16_000:
+        if recording["sample_rate"] != MIC_SAMPLE_RATE:
             raise ValueError("Whisper needs 16 kHz audio.")
         result = self.model.transcribe(recording["audio"], language=self.language, fp16=self.fp16,
                                        word_timestamps=True)
