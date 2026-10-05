@@ -6,6 +6,8 @@ The experiment runs in a worker thread and changes screens only through the publ
 below (Tk itself is used only in the window thread).
 """
 
+import faulthandler
+import os
 import queue
 import signal
 import threading
@@ -40,6 +42,7 @@ CORRECTION_SCREENS = {"physical": ("Physical Correction", "Press the External Ac
                                                               "and tell it what it should do through the microphone.")}
 VISIBLE_ITEMS = 6            # list rows shown at once (the list scrolls with the selection)
 POLL_MS = 20
+SHUTDOWN_HINT_MS = 5000      # the force-quit hint appears if shutting down takes longer
 
 
 class ExperimentUI:
@@ -177,7 +180,12 @@ class ExperimentUI:
             handler()
 
     def _on_sigint(self):
-        """Terminal Ctrl+C = START: start/finish a correction while a task runs, otherwise quit."""
+        """Terminal Ctrl+C = START: start/finish a correction while a task runs, otherwise quit.
+        While shutting down: force quit, after printing where the worker hangs."""
+        if self.closing:
+            print("\n[WARNING] Shutdown did not finish. Where each thread is:", flush=True)
+            faulthandler.dump_traceback(all_threads=True)
+            os._exit(1)
         if "correct" in self._actions:
             self._on_action("correct")
         else:
@@ -191,6 +199,12 @@ class ExperimentUI:
             return
         self.closing = True
         self._show("wait", "Shutting Down", "Stopping the robot safely...")
+        self.root.after(SHUTDOWN_HINT_MS, self._shutdown_hint)
+
+    def _shutdown_hint(self):
+        if self._worker.is_alive():
+            print("[WARNING] Still shutting down. Press Ctrl+C in the terminal to force quit.", flush=True)
+            self.hint.configure(text="Taking too long? Press Ctrl+C in the terminal to force quit.")
 
     def _answer(self, value):
         if self._waiting:
