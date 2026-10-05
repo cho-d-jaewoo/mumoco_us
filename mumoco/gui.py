@@ -14,7 +14,7 @@ import traceback
 from tkinter import font as tkfont, messagebox
 
 from .joystick_input import open_joystick
-from .utils import Stopped, answer_task_name, find_task_path, safe_name, task_video_path
+from .utils import Stopped, answer_task_name, find_task_path, task_video_path
 from .video import SyncedVideos
 
 KEY_ACTIONS = {"<Up>": "up", "<Down>": "down", "<Left>": "left", "<Right>": "right",
@@ -110,9 +110,9 @@ class ExperimentUI:
         self._inbox.put((self._list_screen, (title, options, set(disabled), back, scenario, subtitle, set(completed))))
         return self._wait_answer()
 
-    def ask_name(self, title="Enter Your Name"):
-        """Blocks until a non-empty name is entered; returns it made safe for file names."""
-        self._inbox.put((self._name_screen, (title,)))
+    def ask_user_id(self, title="Enter Your User ID"):
+        """Blocks until a numeric user ID is entered; returns it as a string."""
+        self._inbox.put((self._user_id_screen, (title,)))
         return self._wait_answer()
 
     def ask_yes_no(self, title, text=""):
@@ -375,13 +375,13 @@ class ExperimentUI:
         refresh()
         self._waiting = True
 
-    def _name_screen(self, title):
+    def _user_id_screen(self, title):
         def submit():
-            name = safe_name(entry.get())
-            if name:
-                self._answer(name)
+            user_id = entry.get().strip()
+            if user_id.isdigit():
+                self._answer(user_id)
             else:
-                message.configure(text="Please enter your name.")
+                message.configure(text="Please enter a numeric User ID.")
 
         self._show("input", title, "", "Enter : Continue", {"confirm": submit})
         entry = tk.Entry(self.body, font=(self.font, 26), width=20, justify="center", fg=FG, relief="flat",

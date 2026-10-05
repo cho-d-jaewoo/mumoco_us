@@ -1,6 +1,6 @@
 """Experiment GUI: run a saved task and record physical corrections.
 
-Flow: connect -> home -> participant name -> select task -> select modality -> home -> instructions
+Flow: connect -> home -> user ID -> select task -> select modality -> home -> instructions
       -> START: execute -> START: physical correction -> START: finish -> save? -> home -> select task ...
 A task/modality pair is completed once its correction is saved (this session only); completed pairs,
 and tasks with all modalities completed, can no longer be selected.
@@ -77,8 +77,8 @@ def experiment(ui):
     try:
         ui.status("Robot Initialization", "Arm: Connected\nGripper: Connected\n\nReturning to home...", "moving")
         robot.go_home()
-        user = ui.ask_name()
-        print(f"[INFO] Participant: {user}")
+        user = ui.ask_user_id()
+        print(f"[INFO] User ID: {user}")
         completed = set()                                # (task name, modality) with a saved correction
         names = list(MODALITIES)
         unavailable = [i for i, name in enumerate(names) if MODALITIES[name] is None]

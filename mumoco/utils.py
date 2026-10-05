@@ -298,6 +298,12 @@ def task_base_name(task_name):
     return answer_task_name(task_name)[:-len("_answer")]
 
 
+def task_error_name(task_name):
+    """The error part of '<base>_<error type>' (pnp_down_too_early -> down_too_early)."""
+    base = task_base_name(task_name)
+    return task_name[len(base) + 1:] if task_name.startswith(f"{base}_") else task_name
+
+
 def task_video_path(task_name):
     return VIDEO_DIR / f"{task_name}.webp"
 
@@ -343,7 +349,7 @@ def execute_with_physical_correction(robot, waypoints, tick):
         robot.correction_requested = False
 
 
-def save_correction(task_name, modality, samples, user):
+def save_correction(task_name, modality, samples, user_id):
     """Slice the inactive head/tail and save the dense correction trajectory; returns the path (None if nothing)."""
     interval = active_interval([s["q"] for _, s, _ in samples], [g for _, _, g in samples])
     if interval is None:
@@ -372,7 +378,7 @@ def save_correction(task_name, modality, samples, user):
     }
     folder = CORRECTION_DIR / task_name
     folder.mkdir(parents=True, exist_ok=True)
-    path = folder / f"{task_name}_{user}_{now:%Y%m%d_%H%M%S}.json"
+    path = folder / f"{task_error_name(task_name)}_{user_id}_{modality}_{now:%Y%m%d_%H%M%S}.json"
     path.write_text(json.dumps(data))
     print(f"[INFO] Correction saved: {path.relative_to(ROOT)} "
           f"({len(trajectory)} of {len(samples)} samples, {trajectory[-1]['t']:.1f} s)")
