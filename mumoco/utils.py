@@ -231,7 +231,10 @@ class Robot:
 
     def hold(self, tick):
         """Stand still (zero joint velocity, velocity control) until tick() returns True: the language
-        correction. Keeps reading the state stream, as move_joint does."""
+        correction. Keeps reading the state stream, as move_joint does. Returns the joint positions it stood at."""
+        self.franka.send2robot(self.conn, np.zeros(7))
+        time.sleep(SETTLE_TIME)                         # let the interrupted motion ramp down
+        q = self.franka.readState(self.conn)["q"]
         while True:
             self._check_stop()
             t0 = time.monotonic()
@@ -240,6 +243,7 @@ class Robot:
             if tick():
                 break
             time.sleep(max(0.0, 1 / HZ - (time.monotonic() - t0)))
+        return q
 
     def close(self):
         if not self.in_correction:                       # in correction mode the NUC only accepts 'v'/'c'
@@ -366,9 +370,10 @@ def speech_start(speech):
     return min(w["start"] for w in words) if words else None
 
 
-def save_correction(task_name, modality, user_id, samples=(), speech=None, recording=None):
+def save_correction(task_name, modality, user_id, stop, samples=(), speech=None, recording=None):
     """Save one correction in corrections/<task>/<CORRECTION_FOLDERS[modality]>/; returns the path (None if nothing happened).
 
+    stop: {"t": time.monotonic(), "q" (language: Robot.hold), "gripper_open"} when the task was stopped for the correction.
     samples: (t, state, gripper_open) from Robot.guide, sliced to the active interval (motion / gripper change).
     speech: Transcriber.transcribe(recording); recording: Microphone.stop(), saved in recordings/ as WAV.
     All times are stored relative to the first input of either kind: 0 s = first motion or first spoken word."""
@@ -385,9 +390,15 @@ def save_correction(task_name, modality, user_id, samples=(), speech=None, recor
     now = datetime.now()
     folder = CORRECTION_DIR / task_name / CORRECTION_FOLDERS[modality]
     name = f"{task_error_name(task_name)}_{user_id}_{modality}_{now:%Y%m%d_%H%M%S}"
-    data = {"task_name": task_name, "modality": modality, "recorded_at": now.isoformat(timespec="seconds")}
+    data = {"task_name": task_name, "modality": modality, "user_id": user_id,
+            "recorded_at": now.isoformat(timespec="seconds"),
+            "stop": {"t": rel(stop["t"]), "q": None, "gripper_open": stop["gripper_open"]}}
+    q_stop = stop.get("q", samples[0][1]["q"] if samples else None)     # guide: where its recording began
+    if q_stop is not None:
+        data["stop"]["q"] = np.asarray(q_stop).tolist()
     fields = {"t": "[s] host receive time since the first input (first motion / gripper change or first spoken "
-                   "word, whichever came first); messages carry no NUC timestamp"}
+                   "word, whichever came first); messages carry no NUC timestamp",
+              "stop": "the task stopped for the correction (START): t [s] on the time axis of t, q [rad], gripper_open"}
     if modality != "language":
         data.update(num_recorded_samples=len(samples), num_samples=len(trajectory), state_rate_hz=STATE_HZ)
         fields.update({

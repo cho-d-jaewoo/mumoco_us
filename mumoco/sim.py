@@ -4,6 +4,7 @@ The task is driven exactly as Robot.execute_task drives the real robot: the same
 JointSpline, starting at home with the gripper open. The robot follows the reference with position control.
 """
 
+import importlib.util
 import json
 import os
 import tempfile
@@ -33,6 +34,10 @@ class Simulation:
     def __init__(self, gui=True, speed=1.0, camera=SIM_CAMERA, deformable=False):
         self.gui, self.speed, self.camera = gui, speed, camera
         p.connect(p.GUI if gui else p.DIRECT)
+        if not gui:                                 # GPU rendering (EGL): same images, ~7x faster than the CPU renderer
+            egl = importlib.util.find_spec("eglRenderer")   # (must be loaded before any body)
+            if egl:
+                p.loadPlugin(egl.origin, "_eglRendererPlugin")
         if deformable:                              # soft bodies (cloth); only scenes that need them
             p.resetSimulation(p.RESET_USE_DEFORMABLE_WORLD)
         p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
@@ -44,6 +49,7 @@ class Simulation:
         self.cloths = {}                           # soft cloth the gripper can pick up -> prop under it (or None)
         self.time, self.wall_start, self.gripper_open = 0.0, None, True
         self.frames, self.next_frame = None, 0.0
+        self.size = VIDEO_SIZE                     # [px] rendered frames (width, height)
         self.reset(HOME)
 
     def add_table(self, top=0.0):
@@ -161,7 +167,7 @@ class Simulation:
 
     def render(self):
         from PIL import Image
-        width, height = VIDEO_SIZE
+        width, height = self.size
         c = self.camera
         view = p.computeViewMatrixFromYawPitchRoll(c["cameraTargetPosition"], c["cameraDistance"], c["cameraYaw"],
                                                    c["cameraPitch"], 0, 2)
@@ -402,19 +408,22 @@ def find_correction_start(plan, q0, gripper0):
     return best[1], best[2], best[0]
 
 
-def play_correction(sim, correction):
-    """Replay the dense correction. Samples are spaced 1/state_rate_hz on the NUC (the stored t are host
-    receive times, which bunch up), so the nominal spacing is used."""
-    q = np.array([sample["q"] for sample in correction["trajectory"]])
-    gripper = [sample["gripper_open"] for sample in correction["trajectory"]]
-    t = np.arange(len(q)) / correction["state_rate_hz"]
-    qd = np.gradient(q, t, axis=0) if len(q) > 1 else np.zeros_like(q)
+def play_correction(sim, correction, wait=0.0):
+    """Replay the dense correction; wait: [s] from now until its first motion (the robot moves to its start
+    and stands there meanwhile). The stored t are host receive times, which bunch up, and truncated messages
+    were skipped, so the samples are spread evenly over the recorded time span (real duration, smooth)."""
+    trajectory = correction["trajectory"]
+    q = np.array([sample["q"] for sample in trajectory])
+    gripper = [sample["gripper_open"] for sample in trajectory]
+    t = np.linspace(0.0, trajectory[-1]["t"] - trajectory[0]["t"], len(q))
+    rate = (len(q) - 1) / t[-1] if t[-1] > 0 else correction["state_rate_hz"]
+    qd = np.gradient(q, t, axis=0) if len(q) > 1 and t[-1] > 0 else np.zeros_like(q)
     start = JointSpline([sim.q(), q[0]], VMAX, AMAX)           # the robot stood here when the correction began
-    for s in np.arange(0.0, start.duration, SIM_DT):
-        sim.command(*start.sample(s))
+    for s in np.arange(0.0, max(start.duration, wait), SIM_DT):
+        sim.command(*start.sample(s))                         # (stays at the end after its duration)
         sim.step()
     for s in np.arange(0.0, t[-1] + SIM_DT, SIM_DT):
-        i = min(int(s * correction["state_rate_hz"]), len(q) - 1)
+        i = min(int(s * rate), len(q) - 1)
         sim.command([np.interp(s, t, q[:, j]) for j in range(7)], qd[i])
         sim.set_gripper(gripper[i], wait=False)
         sim.step()

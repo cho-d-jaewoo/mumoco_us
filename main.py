@@ -8,6 +8,8 @@ A task/modality pair is completed once its correction is saved (this session onl
 and tasks with all modalities completed, can no longer be selected.
 """
 
+import time
+
 from mumoco.gui import ExperimentUI
 from mumoco.microphone import Microphone, Transcriber
 from mumoco.utils import Robot, execute_with_correction, load_tasks, save_correction
@@ -40,23 +42,23 @@ def correct_task(robot, task, ui, user, modality, mic, transcriber):
         return False
 
     def correct():                                       # the robot has just stopped
-        samples = []
+        samples, stop = [], {"t": time.monotonic(), "gripper_open": robot.gripper_open}
         if mic:
             mic.start()                                  # before guide(): speech while it switches modes counts
         try:
             if modality == "language":
-                robot.hold(tick)
+                stop["q"] = robot.hold(tick)
             else:
                 robot.guide(lambda t, state, gripper_open: samples.append((t, state, gripper_open)), tick)
         finally:
             recording = mic.stop() if mic else None
-        return samples, recording
+        return samples, recording, stop
 
     ui.show_execution(display_name(task), request_correction)
     result = execute_with_correction(robot, task["waypoints"], correct)
     if result is None:
         return "Task Completed", False
-    samples, recording = result
+    samples, recording, stop = result
     speech, text = None, ""
     if mic:
         if recording is None:
@@ -69,7 +71,7 @@ def correct_task(robot, task, ui, user, modality, mic, transcriber):
     if not ui.ask_yes_no("Save Correction?", text):
         return "Correction Discarded", False
     ui.status("Saving Correction", "Please wait...")
-    if save_correction(task["name"], modality, user, samples, speech, recording) is None:
+    if save_correction(task["name"], modality, user, stop, samples, speech, recording) is None:
         return "Nothing to Save", False
     return "Correction Saved", True
 
