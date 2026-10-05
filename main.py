@@ -8,9 +8,8 @@ A task/modality pair is completed once its correction is saved (this session onl
 and tasks with all modalities completed, can no longer be selected.
 """
 
-import traceback
-
 from mumoco.gui import ExperimentUI
+from mumoco.microphone import Microphone, Transcriber
 from mumoco.utils import Robot, execute_with_correction, load_tasks, save_correction
 
 
@@ -18,21 +17,11 @@ def display_name(task):
     return task["name"].replace("_", " ").title()
 
 
-def load_voice():
-    """(Microphone, Transcriber), or None if either is missing (the language modalities are then unavailable)."""
-    try:
-        from mumoco.microphone import Microphone, Transcriber
-        return Microphone(), Transcriber()
-    except Exception:
-        traceback.print_exc()
-        print("[WARNING] Microphone / Whisper not available (error above). Language-Only and Multimodal are disabled.")
-        return None
-
-
-def correct_task(robot, task, ui, user, modality, voice):
+def correct_task(robot, task, ui, user, modality, mic, transcriber):
     """Run the task and record one correction (modality: physical / language / multimodal).
     Returns (title of the next screen, whether a correction was saved)."""
-    mic, transcriber = voice if modality != "physical" else (None, None)
+    if modality == "physical":
+        mic = None
 
     def request_correction():
         robot.correction_requested = True                # same flag as Ctrl+C -> move_joint -> guide()
@@ -113,18 +102,22 @@ INSTRUCTIONS = {
 def experiment(ui):
     ui.status("Robot Initialization", "Connecting to robot...\n\nArm: waiting\nGripper: waiting")
     robot = Robot(should_stop=lambda: ui.closing)
-    voice = None
+    mic = None
     try:
-        ui.status("Robot Initialization", "Arm: Connected\nGripper: Connected\n\nLoading speech recognition...")
-        voice = load_voice()
-        ui.status("Robot Initialization", "Arm: Connected\nGripper: Connected\n"
-                  f"Microphone: {'Ready' if voice else 'Not available'}\n\nReturning to home...", "moving")
+        ui.status("Robot Initialization", "Arm: Connected\nGripper: Connected\nMicrophone: waiting")
+        mic = Microphone()                               # raises if the microphone is not connected
+        mic.start()                                      # raises if it cannot be opened (e.g. held by another program)
+        mic.stop()
+        ui.status("Robot Initialization", "Arm: Connected\nGripper: Connected\nMicrophone: Connected\n\n"
+                  "Loading speech recognition...")
+        transcriber = Transcriber()
+        ui.status("Robot Initialization", "Arm: Connected\nGripper: Connected\nMicrophone: Connected\n\n"
+                  "Returning to home...", "moving")
         robot.go_home()
         user = ui.ask_user_id()
         print(f"[INFO] User ID: {user}")
         completed = set()                                # (task name, modality) with a saved correction
         names = list(MODALITIES)
-        unavailable = [] if voice else [i for i, name in enumerate(names) if MODALITIES[name] != "physical"]
         while True:
             tasks = load_tasks()
             if not tasks:
@@ -135,7 +128,7 @@ def experiment(ui):
                 ui.status("All Tasks Completed", "Thank you for participating!")
                 return
             task = tasks[ui.choose("Select Task", [display_name(t) for t in tasks], completed=done)]
-            modality = ui.choose("Correction Modality", names, disabled=unavailable, back=True,
+            modality = ui.choose("Correction Modality", names, back=True,
                                  scenario=task["name"], subtitle=task["name"],
                                  completed=[i for i, name in enumerate(names) if (task["name"], name) in completed])
             if modality is None:
@@ -143,14 +136,14 @@ def experiment(ui):
             ui.status("Preparing Task", "Returning to home position...", "moving")
             robot.go_home()
             ui.wait_for_start("Instructions", INSTRUCTIONS[names[modality]].format(task=display_name(task)))
-            result, saved = correct_task(robot, task, ui, user, MODALITIES[names[modality]], voice)
+            result, saved = correct_task(robot, task, ui, user, MODALITIES[names[modality]], mic, transcriber)
             if saved:
                 completed.add((task["name"], names[modality]))
             ui.status(result, "Returning to home position...", "moving")
             robot.go_home()
     finally:
-        if voice:
-            voice[0].close()
+        if mic:
+            mic.close()
         robot.close()
 
 

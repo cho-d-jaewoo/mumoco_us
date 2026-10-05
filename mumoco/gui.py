@@ -28,7 +28,7 @@ JOY_ACTIONS = {"UP": "up", "DOWN": "down", "LEFT": "left", "RIGHT": "right", "Y"
 
 ORANGE, GREEN, BLUE, PURPLE = "#ff9900", "#a0d4a4", "#2a8fbd", "#8d5fd3"
 LIGHT_GRAY, DARK_GRAY, WHITE = "#b3b3b3", "#666666", "#ffffff"
-BG, FG, MUTED, ACCENT, WARN = WHITE, DARK_GRAY, LIGHT_GRAY, BLUE, PURPLE   # MUTED: borders, disabled items
+BG, FG, MUTED, ACCENT, WARN = WHITE, DARK_GRAY, LIGHT_GRAY, BLUE, PURPLE   # MUTED: borders, completed items
 BANNERS = {"wait": ("PLEASE WAIT", LIGHT_GRAY, DARK_GRAY),       # mode: (text, background, text color)
            "moving": ("ROBOT MOVING", ORANGE, DARK_GRAY),
            "input": ("WAITING FOR INPUT", BLUE, WHITE),
@@ -109,12 +109,11 @@ class ExperimentUI:
         self._inbox.put((self._show, ("error", "Something Went Wrong", text,
                                       "The robot was stopped. Close this window and restart the program.")))
 
-    def choose(self, title, options, disabled=(), back=False, scenario=None, subtitle="", completed=()):
-        """Blocks until an enabled option is confirmed; returns its index (None = back, if allowed).
-        disabled: shown as "not available" (selecting it explains why); completed: shown as completed and
-        skipped (cannot be selected). scenario: a task name; adds "View Scenario" (that task's video next
+    def choose(self, title, options, back=False, scenario=None, subtitle="", completed=()):
+        """Blocks until an option is confirmed; returns its index (None = back, if allowed).
+        completed: shown as completed and skipped (cannot be selected). scenario: a task name; adds "View Scenario" (that task's video next
         to its answer's video). subtitle: shown under the title (e.g. the selected task)."""
-        self._inbox.put((self._list_screen, (title, options, set(disabled), back, scenario, subtitle, set(completed))))
+        self._inbox.put((self._list_screen, (title, options, back, scenario, subtitle, set(completed))))
         return self._wait_answer()
 
     def ask_user_id(self, title="Enter Your User ID"):
@@ -236,10 +235,10 @@ class ExperimentUI:
         return button
 
     @staticmethod
-    def _highlight(widget, on, disabled=False):
+    def _highlight(widget, on, muted=False):
         """Selected: blue with white text. Otherwise white with a light gray border."""
         edge = ACCENT if on else MUTED
-        widget.configure(bg=ACCENT if on else BG, fg=WHITE if on else (MUTED if disabled else FG),
+        widget.configure(bg=ACCENT if on else BG, fg=WHITE if on else (MUTED if muted else FG),
                          highlightbackground=edge, highlightcolor=edge)
 
     def _text(self, text, size=22, color=FG):
@@ -247,7 +246,7 @@ class ExperimentUI:
         label.pack(pady=8)
         return label
 
-    def _list_screen(self, title, options, disabled, back, scenario=None, subtitle="", completed=(), sel=0):
+    def _list_screen(self, title, options, back, scenario=None, subtitle="", completed=(), sel=0):
         """Highlighted list. With a scenario, a "View Scenario" button sits left of it; Left / Right move
         the focus between the button and the list, Up / Down move within the list."""
         selectable = [i for i in range(len(options)) if i not in completed]
@@ -260,9 +259,9 @@ class ExperimentUI:
             for row, label in enumerate(rows):
                 i = state["top"] + row
                 on = i == state["sel"]
-                text = options[i] + ("  [Completed]" if i in completed else "  (not available)" if i in disabled else "")
+                text = options[i] + ("  [Completed]" if i in completed else "")
                 label.configure(text=("\u25B6  " if on else "     ") + text)
-                self._highlight(label, on and state["focus"] == "list", i in disabled or i in completed)
+                self._highlight(label, on and state["focus"] == "list", i in completed)
                 if on and state["focus"] != "list":             # keep the selection visible, unfocused
                     label.configure(highlightbackground=ACCENT, highlightcolor=ACCENT)
             if side:
@@ -272,7 +271,6 @@ class ExperimentUI:
             ahead = [i for i in selectable if (i - state["sel"]) * step > 0]   # completed items are skipped
             if state["focus"] == "list" and ahead:
                 state["sel"] = min(ahead, key=lambda i: abs(i - state["sel"]))
-                message.configure(text="")
                 refresh()
 
         def focus(where):
@@ -285,15 +283,12 @@ class ExperimentUI:
                 view_scenario()
             elif state["sel"] in completed:
                 return
-            elif state["sel"] in disabled:
-                message.configure(text=f"{options[state['sel']]} needs the microphone and speech recognition, "
-                                           "which failed to load (see the terminal).")
             else:
                 self._answer(state["sel"])
 
         def view_scenario():
             self._scenario_screen(scenario, lambda: self._list_screen(
-                title, options, disabled, back, scenario, subtitle, completed, state["sel"]))
+                title, options, back, scenario, subtitle, completed, state["sel"]))
 
         def click(row):
             if state["top"] + row not in completed:
@@ -323,8 +318,6 @@ class ExperimentUI:
             label.bind("<Button-1>", lambda event, r=row: click(r))
             label.bind("<Double-Button-1>", lambda event: confirm())
             rows.append(label)
-        message = tk.Label(column, font=(self.font, 18), bg=BG, fg=WARN)   # e.g. "... not implemented yet."
-        message.pack(pady=16)
         refresh()
         self._waiting = True
 

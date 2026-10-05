@@ -49,7 +49,10 @@ class Microphone:
             os.environ["PULSE_SOURCE"] = source          # the "pulse" ALSA device records from this source
             print(f"[INFO] Microphone: {source} (via sound server)")
             return "pulse", MIC_SAMPLE_RATE, 1
-        info = self.sd.query_devices(name, "input")      # ValueError if no input device has this name
+        try:
+            info = self.sd.query_devices(name, "input")
+        except ValueError:
+            raise RuntimeError(f"Microphone '{name}' is not connected (MIC_NAME in mumoco/config.py).") from None
         print(f"[INFO] Microphone: {info['name']}")
         return info["index"], int(info["default_samplerate"]), info["max_input_channels"]
 
