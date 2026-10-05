@@ -8,6 +8,8 @@ A task/modality pair is completed once its correction is saved (this session onl
 and tasks with all modalities completed, can no longer be selected.
 """
 
+import traceback
+
 from mumoco.gui import ExperimentUI
 from mumoco.utils import Robot, execute_with_correction, load_tasks, save_correction
 
@@ -21,9 +23,9 @@ def load_voice():
     try:
         from mumoco.microphone import Microphone, Transcriber
         return Microphone(), Transcriber()
-    except Exception as e:
-        print(f"[WARNING] Microphone / Whisper not available ({type(e).__name__}: {e}). "
-              "Language-Only and Multimodal are disabled.")
+    except Exception:
+        traceback.print_exc()
+        print("[WARNING] Microphone / Whisper not available (error above). Language-Only and Multimodal are disabled.")
         return None
 
 

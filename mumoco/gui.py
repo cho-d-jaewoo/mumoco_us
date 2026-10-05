@@ -286,7 +286,8 @@ class ExperimentUI:
             elif state["sel"] in completed:
                 return
             elif state["sel"] in disabled:
-                message.configure(text=f"{options[state['sel']]} correction is not implemented yet.")
+                message.configure(text=f"{options[state['sel']]} needs the microphone and speech recognition, "
+                                           "which failed to load (see the terminal).")
             else:
                 self._answer(state["sel"])
 
