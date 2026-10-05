@@ -92,8 +92,8 @@ INSTRUCTIONS = {
                       "Press START to begin."),
     "Multimodal": ("The robot will now perform the task: {task}.\n\n"
                    "Whenever you want to take over or correct the robot,\n"
-                   "press START, physically correct the robot just enough to show it\n"
-                   "what it should do, and tell it what you want through the microphone.\n"
+                   "press START, physically correct the robot what it should do,\n"
+                   "while at the same time telling it what you want through the microphone.\n"
                    "Press START again when you are done.\n\n"
                    "Press START to begin."),
 }
