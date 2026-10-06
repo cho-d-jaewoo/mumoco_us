@@ -16,7 +16,7 @@ import traceback
 from tkinter import font as tkfont, messagebox
 
 from .joystick_input import open_joystick
-from .utils import Stopped, answer_task_name, find_task_path, task_video_path
+from .utils import Stopped, task_video_path
 from .video import SyncedVideos
 
 KEY_ACTIONS = {"<Up>": "up", "<Down>": "down", "<Left>": "left", "<Right>": "right",
@@ -109,11 +109,19 @@ class ExperimentUI:
         self._inbox.put((self._show, ("error", "Something Went Wrong", text,
                                       "The robot was stopped. Close this window and restart the program.")))
 
-    def choose(self, title, options, back=False, scenario=None, subtitle="", completed=()):
+    def choose(self, title, options, back=False, subtitle="", completed=()):
         """Blocks until an option is confirmed; returns its index (None = back, if allowed).
-        completed: shown as completed and skipped (cannot be selected). scenario: a task name; adds "View Scenario" (that task's video next
-        to its answer's video). subtitle: shown under the title (e.g. the selected task)."""
-        self._inbox.put((self._list_screen, (title, options, back, scenario, subtitle, set(completed))))
+        completed: shown as completed and skipped (cannot be selected). subtitle: shown under the title."""
+        self._inbox.put((self._list_screen, (title, options, back, subtitle, set(completed))))
+        return self._wait_answer()
+
+    def choose_scenario(self, title, subtitle, letters, modalities, unavailable=(), completed=(), example=None):
+        """Error scenario (letters) and correction modality on one screen. Blocks; returns
+        (letter index, modality index), or None to go back. unavailable: letters shown but not selectable;
+        completed: (letter index, modality index) pairs already done (a letter with all modalities done is
+        completed too). example: a task name whose video "Task Example" shows."""
+        self._inbox.put((self._scenario_screen, (title, subtitle, letters, modalities, set(unavailable),
+                                                 set(completed), example)))
         return self._wait_answer()
 
     def ask_user_id(self, title="Enter Your User ID"):
@@ -246,13 +254,10 @@ class ExperimentUI:
         label.pack(pady=8)
         return label
 
-    def _list_screen(self, title, options, back, scenario=None, subtitle="", completed=(), sel=0):
-        """Highlighted list. With a scenario, a "View Scenario" button sits left of it; Left / Right move
-        the focus between the button and the list, Up / Down move within the list."""
+    def _list_screen(self, title, options, back, subtitle="", completed=()):
+        """Highlighted list; Up / Down move (completed items are skipped), Y confirms."""
         selectable = [i for i in range(len(options)) if i not in completed]
-        if sel in completed and selectable:
-            sel = selectable[0]
-        state = {"sel": sel, "top": 0, "focus": "list"}
+        state = {"sel": selectable[0] if selectable else 0, "top": 0}
 
         def refresh():
             state["top"] = min(max(state["top"], state["sel"] - VISIBLE_ITEMS + 1), state["sel"])
@@ -261,58 +266,30 @@ class ExperimentUI:
                 on = i == state["sel"]
                 text = options[i] + ("  [Completed]" if i in completed else "")
                 label.configure(text=("\u25B6  " if on else "     ") + text)
-                self._highlight(label, on and state["focus"] == "list", i in completed)
-                if on and state["focus"] != "list":             # keep the selection visible, unfocused
-                    label.configure(highlightbackground=ACCENT, highlightcolor=ACCENT)
-            if side:
-                self._highlight(side, state["focus"] == "side")
+                self._highlight(label, on, i in completed)
 
         def move(step):
-            ahead = [i for i in selectable if (i - state["sel"]) * step > 0]   # completed items are skipped
-            if state["focus"] == "list" and ahead:
+            ahead = [i for i in selectable if (i - state["sel"]) * step > 0]
+            if ahead:
                 state["sel"] = min(ahead, key=lambda i: abs(i - state["sel"]))
                 refresh()
 
-        def focus(where):
-            if side:
-                state["focus"] = where
-                refresh()
-
         def confirm():
-            if state["focus"] == "side":
-                view_scenario()
-            elif state["sel"] in completed:
-                return
-            else:
+            if state["sel"] not in completed:
                 self._answer(state["sel"])
-
-        def view_scenario():
-            self._scenario_screen(scenario, lambda: self._list_screen(
-                title, options, back, scenario, subtitle, completed, state["sel"]))
 
         def click(row):
             if state["top"] + row not in completed:
-                state["sel"], state["focus"] = state["top"] + row, "list"
+                state["sel"] = state["top"] + row
                 refresh()
 
         actions = {"up": lambda: move(-1), "down": lambda: move(1), "confirm": confirm, "yes": confirm}
-        hint = "\u2191 / \u2193 : Move     Y : Confirm"
-        if scenario:
-            actions.update(left=lambda: focus("side"), right=lambda: focus("list"), scenario=view_scenario)
-            hint = "\u2191 / \u2193 : Move     \u2190 / \u2192 : View Scenario     Y : Confirm"
         if back:
             actions["no"] = actions["cancel"] = lambda: self._answer(None)
-        self._show("input", title, subtitle, hint, actions)
-        columns = tk.Frame(self.body, bg=BG)
-        columns.pack()
-        side = self._button("View Scenario", "scenario", columns) if scenario else None
-        if side:
-            side.pack(side="left", padx=(0, 60))
-        column = tk.Frame(columns, bg=BG)
-        column.pack(side="left")
+        self._show("input", title, subtitle, "\u2191 / \u2193 : Move     Y : Confirm", actions)
         rows = []
         for row in range(min(len(options), VISIBLE_ITEMS)):
-            label = tk.Label(column, font=(self.font, 24), anchor="w", padx=30, pady=12, width=26 if side else 30,
+            label = tk.Label(self.body, font=(self.font, 24), anchor="w", padx=30, pady=12, width=30,
                              highlightthickness=2, cursor="hand2")
             label.pack(pady=5)
             label.bind("<Button-1>", lambda event, r=row: click(r))
@@ -321,48 +298,135 @@ class ExperimentUI:
         refresh()
         self._waiting = True
 
-    def _scenario_screen(self, task_name, back):
-        """The task's video ("WILL act") next to its answer task's video ("SHOULD act"), looping in sync."""
-        answer = answer_task_name(task_name)
-        self._show("input", f"{task_name} Scenario", "", "X : Back",
+    def _scenario_screen(self, title, subtitle, letters, modalities, unavailable, completed, example, state=None):
+        """Three columns: "Task Example" | error scenarios | correction modalities (shown once a scenario is
+        chosen). Left / Right move between the columns, Up / Down within one, Y confirms, X goes back."""
+        done = {i for i in range(len(letters)) if all((i, m) in completed for m in range(len(modalities)))}
+        open_letters = [i for i in range(len(letters)) if i not in unavailable and i not in done]
+        st = state or {"focus": "letters", "letter": open_letters[0] if open_letters else 0, "chosen": None,
+                       "modality": 0}
+
+        def open_modalities():
+            return [m for m in range(len(modalities)) if st["chosen"] is not None and (st["chosen"], m) not in completed]
+
+        def refresh():
+            for i, label in enumerate(letter_rows):
+                on = i == st["letter"]
+                tag = "  [Completed]" if i in done else "  (not available)" if i in unavailable else ""
+                label.configure(text=("\u25B6  " if on else "     ") + letters[i] + tag)
+                self._highlight(label, on and st["focus"] == "letters", i in done or i in unavailable)
+                if i == st["chosen"] and st["focus"] != "letters":    # the chosen scenario stays marked
+                    label.configure(highlightbackground=ACCENT, highlightcolor=ACCENT)
+            for m, label in enumerate(modality_rows):
+                if st["chosen"] is None:                               # modalities appear once a scenario is chosen
+                    label.configure(text="", bg=BG, highlightbackground=BG, highlightcolor=BG)
+                    continue
+                on = m == st["modality"] and st["focus"] == "modalities"
+                finished = (st["chosen"], m) in completed
+                label.configure(text=("\u25B6  " if on else "     ") + modalities[m] + ("  [Completed]" if finished else ""))
+                self._highlight(label, on, finished)
+            self._highlight(example_button, st["focus"] == "example")
+
+        def move(step):
+            column = {"letters": open_letters, "modalities": open_modalities()}.get(st["focus"], [])
+            key = "letter" if st["focus"] == "letters" else "modality"
+            ahead = [i for i in column if (i - st[key]) * step > 0]
+            if ahead:
+                st[key] = min(ahead, key=lambda i: abs(i - st[key]))
+                refresh()
+
+        def choose_letter(i):
+            if i in open_letters:
+                st["letter"], st["chosen"], st["focus"] = i, i, "modalities"
+                st["modality"] = (open_modalities() or [0])[0]
+                refresh()
+
+        def confirm():
+            if st["focus"] == "example":
+                show_example()
+            elif st["focus"] == "letters":
+                choose_letter(st["letter"])
+            elif st["modality"] in open_modalities():
+                self._answer((st["chosen"], st["modality"]))
+
+        def left():
+            st["focus"] = {"modalities": "letters", "letters": "example"}.get(st["focus"], st["focus"])
+            refresh()
+
+        def right():
+            st["focus"] = {"example": "letters", "letters": "modalities" if st["chosen"] is not None else "letters"
+                           }.get(st["focus"], st["focus"])
+            refresh()
+
+        def back():
+            if st["focus"] == "modalities":                            # undo the scenario choice
+                st["focus"], st["chosen"] = "letters", None
+                refresh()
+            else:
+                self._answer(None)
+
+        def show_example():
+            self._example_screen(subtitle, example, lambda: self._scenario_screen(
+                title, subtitle, letters, modalities, unavailable, completed, example, st))
+
+        def click_modality(m):
+            if m in open_modalities():
+                st["modality"], st["focus"] = m, "modalities"
+                refresh()
+
+        actions = {"up": lambda: move(-1), "down": lambda: move(1), "left": left, "right": right,
+                   "confirm": confirm, "yes": confirm, "no": back, "cancel": back, "example": show_example}
+        self._show("input", title, subtitle,
+                   "\u2191 / \u2193 : Move     \u2190 / \u2192 : Switch Column     Y : Confirm     X : Back", actions)
+        columns = tk.Frame(self.body, bg=BG)
+        columns.pack()
+        example_button = self._button("Task Example", "example", columns)
+        example_button.pack(side="left", padx=(0, 50))
+        letter_column, modality_column = tk.Frame(columns, bg=BG), tk.Frame(columns, bg=BG)
+        letter_column.pack(side="left", padx=(0, 40))
+        modality_column.pack(side="left")
+        letter_rows, modality_rows = [], []
+        for i in range(len(letters)):
+            label = tk.Label(letter_column, font=(self.font, 24), anchor="w", padx=24, pady=10, width=14,
+                             highlightthickness=2, cursor="hand2")
+            label.pack(pady=5)
+            label.bind("<Button-1>", lambda event, i=i: choose_letter(i))
+            letter_rows.append(label)
+        for m in range(len(modalities)):
+            label = tk.Label(modality_column, font=(self.font, 24), anchor="w", padx=24, pady=10, width=20,
+                             highlightthickness=2, cursor="hand2")
+            label.pack(pady=5)
+            label.bind("<Button-1>", lambda event, m=m: click_modality(m))
+            label.bind("<Double-Button-1>", lambda event: confirm())
+            modality_rows.append(label)
+        refresh()
+        self._waiting = True
+
+    def _example_screen(self, task_title, example, back):
+        """The answer task's video: how the robot should behave (the goal of a correction)."""
+        self._show("input", "Correction Goal", f"{task_title}: how the robot should behave", "X : Back",
                    {action: back for action in ("confirm", "yes", "no", "cancel")})
         self.hint.bind("<Button-1>", lambda event: self._on_action("no"))    # mouse: click "X : Back"
         self.hint.configure(cursor="hand2")
         self.root.update_idletasks()
-        width = min((self.root.winfo_width() - 120) // 2, int((self.root.winfo_height() - 380) * 16 / 9))
-        size = (max(width, 240), max(width, 240) * 9 // 16)
-        if find_task_path(answer) is None and not task_video_path(answer).exists():
-            answer_missing = f"No answer task found for: {task_name}"
+        width = min(self.root.winfo_width() - 200, int((self.root.winfo_height() - 330) * 16 / 9))
+        size = (max(width, 320), max(width, 320) * 9 // 16)
+        box = tk.Frame(self.body, width=size[0], height=size[1], bg=BG, highlightthickness=2, highlightbackground=MUTED)
+        box.pack_propagate(False)
+        box.pack()
+        video = tk.Label(box, bg=BG, fg=FG, font=(self.font, 18), wraplength=size[0] - 40)
+        video.pack(fill="both", expand=True)
+        path = task_video_path(example) if example else None
+        if path is None or not path.exists():
+            video.configure(text=f"Task example video not found for: {example}")
+            return
+        try:
+            player = SyncedVideos(self.root, [video], [path], size,
+                                  on_error=lambda i, message: video.configure(text=message, image=""))
+        except ImportError:
+            video.configure(text="Video playback needs Pillow (pip install pillow).")
         else:
-            answer_missing = f"Answer video not found for: {answer}"
-        columns = tk.Frame(self.body, bg=BG)
-        columns.pack()
-        labels, paths = [], []
-        for heading, name, missing in (("How the robot WILL act", task_name, f"Task video not found for: {task_name}"),
-                                       ("How the robot SHOULD act", answer, answer_missing)):
-            column = tk.Frame(columns, bg=BG)
-            column.pack(side="left", padx=20)
-            tk.Label(column, text=heading, font=(self.font, 26, "bold"), bg=BG, fg=FG).pack(pady=(0, 12))
-            box = tk.Frame(column, width=size[0], height=size[1], bg=BG, highlightthickness=2,
-                           highlightbackground=MUTED)
-            box.pack_propagate(False)
-            box.pack()
-            video = tk.Label(box, bg=BG, fg=FG, font=(self.font, 18), wraplength=size[0] - 40)
-            video.pack(fill="both", expand=True)
-            if task_video_path(name).exists():
-                labels.append(video)
-                paths.append(task_video_path(name))
-            else:
-                video.configure(text=missing)
-        if paths:
-            try:
-                player = SyncedVideos(self.root, labels, paths, size,
-                                      on_error=lambda i, message: labels[i].configure(text=message, image=""))
-            except ImportError:
-                for label in labels:
-                    label.configure(text="Video playback needs Pillow (pip install pillow).")
-            else:
-                self._cleanup = player.stop
+            self._cleanup = player.stop
 
     def _yes_no_screen(self, title, text):
         sel = [1]                                        # 0 = Yes, 1 = No (default)

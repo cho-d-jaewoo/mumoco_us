@@ -34,7 +34,8 @@ class Simulation:
     def __init__(self, gui=True, speed=1.0, camera=SIM_CAMERA, deformable=False):
         self.gui, self.speed, self.camera = gui, speed, camera
         p.connect(p.GUI if gui else p.DIRECT)
-        if not gui:                                 # GPU rendering (EGL): same images, ~7x faster than the CPU renderer
+        if not gui and not deformable:              # GPU rendering (EGL): same images, ~7x faster than the CPU renderer
+                                                    # (not for soft bodies: EGL draws the cloth black)
             egl = importlib.util.find_spec("eglRenderer")   # (must be loaded before any body)
             if egl:
                 p.loadPlugin(egl.origin, "_eglRendererPlugin")

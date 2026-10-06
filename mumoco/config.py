@@ -6,10 +6,20 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent   # repository root
 TASK_DIR = ROOT / "tasks"                 # tasks shown in the experiment
 ANSWER_DIR = ROOT / "task_answers"        # <base>_answer.json: how each task should be done
-VIDEO_DIR = ROOT / "task_videos"          # <task>.webp, made by sim_task.py, shown by "View Scenario"
+VIDEO_DIR = ROOT / "task_videos"          # <task>.webp, made by sim_task.py; answers shown by "Task Example"
 CORRECTION_DIR = ROOT / "corrections"
 # corrections/<task>/<folder>/ per modality; language and multimodal keep the audio in <folder>/recordings/
 CORRECTION_FOLDERS = {"physical": "physical_only", "language": "language_only", "multimodal": "multimodal"}
+MODALITY_NAMES = {"physical": "Physical-Only", "language": "Language-Only", "multimodal": "Multimodal"}  # GUI order
+
+# ---------------- experiment tasks (main.py) ----------------
+# High-level task -> (short name, error scenarios). Participants only see the letters; each scenario name is
+# the error part of its task file, tasks/<short>_<error>.json. None = not implemented yet (shown, not selectable).
+EXPERIMENT_TASKS = {
+    "Pick and Place": ("pnp", {"A": "spill", "B": "too_high", "C": "place_on_toaster", "D": None}),
+    "Bread in Toaster": ("bit", {"A": "off_the_slot", "B": "straight_to_goal", "C": "to_the_plate", "D": None}),
+    "Wipe the Plate": ("wtp", {"A": "vertical_swiping", "B": "lose_contact", "C": "no_cloth", "D": None}),
+}
 
 # ---------------- connection (arm_control_cjw.cpp / gripper_control_cjw.cpp) ----------------
 ARM_PORT = 8080

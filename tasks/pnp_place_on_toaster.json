@@ -1,5 +1,5 @@
 {
-  "name": "pnp_to_the_plate",
+  "name": "pnp_place_on_toaster",
   "waypoints": [
     {"joint_positions": [-0.227228, -0.52368, 0.132601, -2.348282, 0.042646, 1.851853, 0.642118], "gripper_open": true},
     {"joint_positions": [-0.205502, -0.160883, 0.133151, -2.735484, 0.041342, 2.591732, 0.659801], "gripper_open": true},

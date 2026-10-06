@@ -390,7 +390,7 @@ def save_correction(task_name, modality, user_id, stop, samples=(), speech=None,
                    "gripper_open": g} for t, s, g in samples[start:end + 1]]
     now = datetime.now()
     folder = CORRECTION_DIR / task_name / CORRECTION_FOLDERS[modality]
-    name = f"{task_error_name(task_name)}_{user_id}_{modality}_{now:%Y%m%d_%H%M%S}"
+    name = safe_name(f"{task_name}_{user_id}_{MODALITY_NAMES[modality]}_{now:%Y%m%d_%H%M%S}")   # pnp_spill_17_Physical-Only_...
     data = {"task_name": task_name, "modality": modality, "user_id": user_id,
             "recorded_at": now.isoformat(timespec="seconds"),
             "stop": {"t": rel(stop["t"]), "q": None, "gripper_open": stop["gripper_open"]}}

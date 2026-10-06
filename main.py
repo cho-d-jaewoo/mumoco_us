@@ -1,27 +1,25 @@
 """Experiment GUI: run a saved task and record physical, language or multimodal corrections.
 
-Flow: connect -> home -> user ID -> select task -> select modality -> home -> instructions
+Flow: connect -> home -> user ID -> select task -> select error scenario (A-D) and modality -> home -> instructions
       -> START: execute -> START: correction -> START: finish -> (speech to text) -> save? -> home -> select task ...
 Correction: physical = guide the robot; language = the robot stands still while the microphone records;
 multimodal = guide the robot while the microphone records.
-A task/modality pair is completed once its correction is saved (this session only); completed pairs,
-and tasks with all modalities completed, can no longer be selected.
+Participants see only the high-level tasks and scenario letters (EXPERIMENT_TASKS in config.py); the error
+names stay internal. A task/scenario/modality is completed once its correction is saved (this session only);
+completed ones, scenarios with all modalities completed and tasks with all scenarios completed cannot be selected.
 """
 
 import time
 
+from mumoco.config import EXPERIMENT_TASKS, MODALITY_NAMES
 from mumoco.gui import ExperimentUI
 from mumoco.microphone import Microphone, Transcriber
-from mumoco.utils import Robot, execute_with_correction, load_tasks, save_correction
+from mumoco.utils import Robot, execute_with_correction, find_task_path, load_task, save_correction
 
 
-def display_name(task):
-    return task["name"].replace("_", " ").title()
-
-
-def correct_task(robot, task, ui, user, modality, mic, transcriber):
-    """Run the task and record one correction (modality: physical / language / multimodal).
-    Returns (title of the next screen, whether a correction was saved)."""
+def correct_task(robot, task, ui, user, modality, mic, transcriber, title):
+    """Run the task and record one correction (modality: physical / language / multimodal); title is the
+    high-level task name shown to the participant. Returns (title of the next screen, whether a correction was saved)."""
     if modality == "physical":
         mic = None
 
@@ -54,7 +52,7 @@ def correct_task(robot, task, ui, user, modality, mic, transcriber):
             recording = mic.stop() if mic else None
         return samples, recording, stop
 
-    ui.show_execution(display_name(task), request_correction)
+    ui.show_execution(title, request_correction)
     result = execute_with_correction(robot, task["waypoints"], correct)
     if result is None:
         return "Task Completed", False
@@ -76,9 +74,9 @@ def correct_task(robot, task, ui, user, modality, mic, transcriber):
     return "Correction Saved", True
 
 
-MODALITIES = {"Physical-Only": "physical", "Language-Only": "language", "Multimodal": "multimodal"}
+MODALITIES = list(MODALITY_NAMES)                     # physical, language, multimodal
 
-# Shown before each run; the participant presses START to begin. {task} is the task's display name.
+# Shown before each run; the participant presses START to begin. {task} is the high-level task name.
 INSTRUCTIONS = {
     "Physical-Only": ("The robot will now perform the task: {task}.\n\n"
                       "Whenever you want to take over or correct the robot,\n"
@@ -118,29 +116,44 @@ def experiment(ui):
         robot.go_home()
         user = ui.ask_user_id()
         print(f"[INFO] User ID: {user}")
-        completed = set()                                # (task name, modality) with a saved correction
-        names = list(MODALITIES)
+        completed = set()                                # (short name, error, modality) with a saved correction
+        titles = list(EXPERIMENT_TASKS)
+
+        def implemented(title):                          # letter -> error, for scenarios with a task file
+            short, errors = EXPERIMENT_TASKS[title]
+            return {letter: error for letter, error in errors.items() if error and find_task_path(f"{short}_{error}")}
+
+        def task_done(title):
+            short = EXPERIMENT_TASKS[title][0]
+            return all((short, error, m) in completed for error in implemented(title).values() for m in MODALITIES)
+
         while True:
-            tasks = load_tasks()
-            if not tasks:
-                ui.error("No valid tasks in tasks/. Record one with record_tasks.py.")
-                return
-            done = [i for i, t in enumerate(tasks) if all((t["name"], name) in completed for name in names)]
-            if len(done) == len(tasks):
+            done = [i for i, title in enumerate(titles) if task_done(title)]
+            if len(done) == len(titles):
                 ui.status("All Tasks Completed", "Thank you for participating!")
                 return
-            task = tasks[ui.choose("Select Task", [display_name(t) for t in tasks], completed=done)]
-            modality = ui.choose("Correction Modality", names, back=True,
-                                 scenario=task["name"], subtitle=task["name"],
-                                 completed=[i for i, name in enumerate(names) if (task["name"], name) in completed])
-            if modality is None:
+            title = titles[ui.choose("Select Task", titles, completed=done)]
+            short, errors = EXPERIMENT_TASKS[title]
+            letters, ready = list(errors), implemented(title)
+            choice = ui.choose_scenario(
+                "Choose Error Scenario and Correction Modality", title, letters,
+                [MODALITY_NAMES[m] for m in MODALITIES],
+                unavailable=[i for i, letter in enumerate(letters) if letter not in ready],
+                completed=[(i, j) for i, letter in enumerate(letters) for j, m in enumerate(MODALITIES)
+                           if (short, errors[letter], m) in completed],
+                example=f"{short}_answer")
+            if choice is None:
                 continue
+            letter, modality = letters[choice[0]], MODALITIES[choice[1]]
+            error = errors[letter]
+            task = load_task(find_task_path(f"{short}_{error}"))
+            print(f"[INFO] {title}, scenario {letter} = {task['name']}, {MODALITY_NAMES[modality]}")
             ui.status("Preparing Task", "Returning to home position...", "moving")
             robot.go_home()
-            ui.wait_for_start("Instructions", INSTRUCTIONS[names[modality]].format(task=display_name(task)))
-            result, saved = correct_task(robot, task, ui, user, MODALITIES[names[modality]], mic, transcriber)
+            ui.wait_for_start("Instructions", INSTRUCTIONS[MODALITY_NAMES[modality]].format(task=title))
+            result, saved = correct_task(robot, task, ui, user, modality, mic, transcriber, title)
             if saved:
-                completed.add((task["name"], names[modality]))
+                completed.add((short, error, modality))
             ui.status(result, "Returning to home position...", "moving")
             robot.go_home()
     finally:
