@@ -377,7 +377,8 @@ def save_correction(task_name, modality, user_id, stop, samples=(), speech=None,
     samples: (t, state, gripper_open) from Robot.guide, sliced to the active interval (motion / gripper change).
     speech: Transcriber.transcribe(recording); recording: Microphone.stop(), saved in recordings/ as WAV.
     All times are stored relative to the first input of either kind: 0 s = first motion or first spoken word."""
-    interval = active_interval([s["q"] for _, s, _ in samples], [g for _, _, g in samples]) if samples else None
+    interval = active_interval([t for t, _, _ in samples], [s["q"] for _, s, _ in samples],
+                               [g for _, _, g in samples]) if samples else None
     spoken = speech_start(speech)
     if interval is None and spoken is None:
         print("[WARNING] No motion, gripper action or speech detected. Nothing saved.")

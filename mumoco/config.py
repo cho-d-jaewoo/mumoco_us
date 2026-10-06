@@ -34,8 +34,8 @@ LOWER = np.array([-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -2.8973]
 UPPER = np.array([ 2.8973,  1.7628,  2.8973, -0.0698,  2.8973,  3.7525,  2.8973])
 
 # ---------------- trajectory slicing ----------------
-MOTION_THRESHOLD = 1e-4      # [rad] joint change between consecutive state messages that counts as motion
-                             # (1e-4 rad per message at 100 Hz = 0.01 rad/s)
+MOTION_SPEED = 0.05          # [rad/s] a joint faster than this over MOTION_WINDOW counts as the user guiding;
+MOTION_WINDOW = 0.2          # [s]     slower is the drift of the compliant robot before/after (measured < 0.01 rad/s)
 
 # ---------------- joystick (joystick_example.py, SteelSeries duo) ----------------
 JOY_BUTTONS = {"A": 0, "B": 1, "X": 2, "Y": 3, "BACK": 6, "START": 7}

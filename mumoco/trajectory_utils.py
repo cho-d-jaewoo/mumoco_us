@@ -2,24 +2,29 @@
 
 import numpy as np
 
-from .config import JOINT_TOL, MOTION_THRESHOLD
+from .config import JOINT_TOL, MOTION_SPEED, MOTION_WINDOW
 
 
-def active_interval(q, gripper, threshold=MOTION_THRESHOLD):
-    """Inclusive (start, end) of the meaningful interaction, or None if nothing happened.
+def active_interval(t, q, gripper, speed=MOTION_SPEED, window=MOTION_WINDOW):
+    """Inclusive (start, end) sample indices of the user's physical input, or None if there was none.
 
-    A frame is active if any joint moved more than `threshold` since the previous frame,
-    or if the gripper state changed. `start` is the frame just BEFORE the first active frame
-    (the configuration before motion), `end` is the last active frame.
+    Active: some joint moves faster than `speed` over a `window` [s] (slower changes are the drift of the
+    compliant robot while nobody guides it), or the gripper state changes. `start` is where the first
+    active window begins (the configuration before the motion), `end` where the last one ends.
     """
-    q, g = np.asarray(q, dtype=np.float64), np.asarray(gripper, dtype=bool)
+    t, q, g = np.asarray(t, dtype=np.float64), np.asarray(q, dtype=np.float64), np.asarray(gripper, dtype=bool)
     if len(q) < 2:
         return None
-    changed = (np.max(np.abs(np.diff(q, axis=0)), axis=1) > threshold) | (g[1:] != g[:-1])
-    frames = np.flatnonzero(changed) + 1
-    if len(frames) == 0:
+    i = np.arange(len(t))
+    j = np.searchsorted(t, t + window)                  # first sample at least `window` later
+    full = j < len(t)                                    # windows that fit in the recording
+    i, j = i[full], j[full]
+    fast = np.max(np.abs(q[j] - q[i]), axis=1) / (t[j] - t[i]) > speed
+    changes = np.flatnonzero(g[1:] != g[:-1]) + 1
+    starts, ends = np.concatenate((i[fast], changes - 1)), np.concatenate((j[fast], changes))
+    if len(starts) == 0:
         return None
-    return int(frames[0] - 1), int(frames[-1])
+    return int(starts.min()), int(ends.max())
 
 
 

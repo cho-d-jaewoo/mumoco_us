@@ -1,12 +1,13 @@
-"""Video of one participant's corrections of a task: four PyBullet replays on one time axis.
+"""Video of one user's corrections of a task: four PyBullet replays on one time axis.
 
     python3 correction_video.py pnp_spill 0          # -> correction_videos/pnp_spill_user0.mp4
 
-Top left: the answer task. Top right / bottom left / bottom right: the task with the participant's newest
+Top left: the answer task. Top right / bottom left / bottom right: the task with the user's newest
 physical-only / language-only / multimodal correction (corrections/<task>/<modality folder>/). All panels
-start the task together. A correction panel stops where the participant pressed START and from then on
-shows the correction in real time: a colored frame while in correction mode, the recorded motion, and the
-spoken words in a speech bubble as they were said. Scene and camera as in sim_task.py.
+start the task together. A correction panel stops where the user pressed START and shows the correction
+in real time from the user's first input to the last (the time without input right after START and before
+START again is cut): a colored frame while in correction mode, the recorded motion, and the spoken words
+in a speech bubble as they were said. Scene and camera as in sim_task.py.
 Needs imageio-ffmpeg (pip install imageio-ffmpeg) for the MP4.
 """
 
@@ -21,6 +22,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from mumoco.config import CORRECTION_DIR, CORRECTION_FOLDERS, ROOT, VIDEO_FPS, VIDEO_HOLD
 from mumoco.sim import find_correction_start, make_simulation, plan_task, play_correction, play_task
+from mumoco.trajectory_utils import active_interval
 from mumoco.utils import find_task_path, load_task, task_base_name
 
 OUT_DIR = ROOT / "correction_videos"
@@ -69,28 +71,37 @@ def find_correction(task_name, user, modality):
     return max(paths, key=lambda path: path.name[-20:]) if paths else None      # date_time.json sorts by time
 
 
-def correction_stop(correction, path):
-    """(t, q, gripper_open) where the task stopped for the correction. Files saved before "stop" was added:
-    the recording start (multimodal) or the first trajectory sample (physical); language needs "stop"."""
-    stop, trajectory = correction.get("stop") or {}, correction.get("trajectory") or []
-    if stop.get("q") is None and not trajectory:
+def user_input(correction):
+    """The trajectory sliced to the user's physical input (active_interval; files saved with the older, too
+    sensitive slicing still contain the robot's drift before and after) and the file times of the first and
+    last input of either kind. The time without input after START and before START again is not shown."""
+    trajectory = correction.get("trajectory") or []
+    interval = active_interval([s["t"] for s in trajectory], [s["q"] for s in trajectory],
+                               [s["gripper_open"] for s in trajectory]) if trajectory else None
+    trajectory = trajectory[interval[0]:interval[1] + 1] if interval else []
+    words = [w for s in (correction.get("language") or {}).get("segments", []) for w in s["words"]]
+    starts = [w["start"] for w in words] + ([trajectory[0]["t"]] if trajectory else [])
+    ends = [w["end"] for w in words] + ([trajectory[-1]["t"]] if trajectory else [])
+    return trajectory, (min(starts), max(ends)) if starts else None
+
+
+def stop_pose(correction, trajectory, path):
+    """(q, gripper_open) where the robot stood when the input began: the first sample of the physical input,
+    else where the task stopped (language: "stop", saved since 2026-10-05)."""
+    if trajectory:
+        return trajectory[0]["q"], trajectory[0]["gripper_open"]
+    stop = correction.get("stop") or {}
+    if stop.get("q") is None:
         raise SystemExit(f"[ERROR] {path.relative_to(ROOT)} does not store where the robot stopped "
                          "(recorded before 'stop' was saved). Record this correction again.")
-    first = trajectory[0] if trajectory else {}
-    t = stop.get("t", correction["audio"]["start"] if "audio" in correction else first.get("t"))
-    q = stop["q"] if stop.get("q") is not None else first["q"]
-    return t, q, stop.get("gripper_open", first.get("gripper_open"))
+    return stop["q"], stop["gripper_open"]
 
 
-def correction_events(correction, stop_t, shift):
-    """Video times [s] (file time + shift) of the correction: start (START), end (START again), motion span,
+def correction_events(correction, trajectory, span, shift):
+    """Video times [s] (file time + shift): correction start/end (first/last input), physical input span,
     speech segments and words."""
-    trajectory = correction.get("trajectory") or []
     segments = (correction.get("language") or {}).get("segments", [])
-    ends = [stop_t] + [s["end"] for s in segments] + ([trajectory[-1]["t"]] if trajectory else [])
-    if "audio" in correction:
-        ends.append(correction["audio"]["start"] + correction["audio"]["duration"])
-    return {"start": stop_t + shift, "end": max(ends) + shift,
+    return {"start": span[0] + shift, "end": span[1] + shift,
             "motion": (trajectory[0]["t"] + shift, trajectory[-1]["t"] + shift) if trajectory else None,
             "segments": [(s["start"] + shift, s["end"] + shift) for s in segments],
             "words": [(w["start"] + shift, w["end"] + shift, w["word"]) for s in segments for w in s["words"]]}
@@ -110,15 +121,17 @@ def simulate(base, waypoints, correction=None, path=None):
     if correction is None:
         play_task(sim, plan)
     else:
-        stop_t, q, gripper_open = correction_stop(correction, path)
-        segment, t, distance = find_correction_start(plan, q, gripper_open)
+        trajectory, span = user_input(correction)
+        if span is None:
+            raise SystemExit(f"[ERROR] {path.relative_to(ROOT)} contains no motion and no speech.")
+        segment, t, distance = find_correction_start(plan, *stop_pose(correction, trajectory, path))
         if distance > 0.1:
             print(f"[WARNING] {path.name}: the robot stopped {distance:.2f} rad away from the task path.")
         play_task(sim, plan, stop=(segment, t))
-        shift = sim.time - t0 - stop_t             # file time -> video time
-        events = correction_events(correction, stop_t, shift)
-        if correction.get("trajectory"):
-            play_correction(sim, correction, wait=events["motion"][0] - (sim.time - t0))
+        shift = sim.time - t0 - span[0]            # file time -> video time; the first input starts right away
+        events = correction_events(correction, trajectory, span, shift)
+        if trajectory:
+            play_correction(sim, {**correction, "trajectory": trajectory}, wait=events["motion"][0] - (sim.time - t0))
         sim.wait(max(0.0, events["end"] - (sim.time - t0)))
     sim.wait(VIDEO_HOLD[1])                        # end pose, released object settles
     pybullet.disconnect()
@@ -142,12 +155,12 @@ def status(events, t):
         return "EXECUTING TASK", GRAY
     if t >= events["end"]:
         return "CORRECTION DONE", (78, 82, 90)
-    doing = []
+    inputs = []
     if events["motion"] and events["motion"][0] <= t <= events["motion"][1]:
-        doing.append("GUIDING")
+        inputs.append("PHYSICAL")
     if any(a <= t <= b for a, b in events["segments"]):
-        doing.append("SPEAKING")
-    return " · ".join(["CORRECTION MODE"] + [" + ".join(doing)] * bool(doing)), GREEN
+        inputs.append("LANGUAGE")
+    return " - ".join(["CORRECTION MODE"] + [" + ".join(inputs)] * bool(inputs)), GREEN
 
 
 def speech_bubble(panel, words, t):
@@ -179,7 +192,7 @@ def speech_bubble(panel, words, t):
     o.line([tail[0], tail[2], tail[1]], fill=(200, 204, 212, 255), width=2)
     panel.alpha_composite(overlay)
     draw = ImageDraw.Draw(panel)
-    draw.text((box[0] + pad, box[1] + pad - 4), "PARTICIPANT", font=FONTS["label"], fill=MUTED)
+    draw.text((box[0] + pad, box[1] + pad - 4), "USER", font=FONTS["label"], fill=MUTED)
     for row, words_in_line in enumerate(lines):
         x, y = box[0] + pad, box[1] + pad + 18 + row * line_h
         for word, f in words_in_line:
@@ -209,10 +222,6 @@ def compose(panels, t, caption):
     draw = ImageDraw.Draw(frame)
     draw.text((18, HEADER_H / 2), caption, font=FONTS["header"], fill=INK, anchor="lm")
     draw.text((VIDEO_W - 18, HEADER_H / 2), f"t = {t:5.1f} s", font=FONTS["header"], fill=INK, anchor="rm")
-    legend = "Correction mode (frame)"                # what the green frame means
-    x = VIDEO_W / 2 - draw.textlength(legend, font=FONTS["pill"]) / 2
-    draw.rectangle((x - 30, HEADER_H / 2 - 8, x - 14, HEADER_H / 2 + 8), outline=GREEN, width=4)
-    draw.text((x, HEADER_H / 2), legend, font=FONTS["pill"], fill=MUTED, anchor="lm")
     for k, (scene, title, events) in enumerate(panels):
         frame.paste(draw_panel(scene, title, events, t), ((k % 2) * PANEL_W, HEADER_H + (k // 2) * PANEL_H))
     draw.line([(PANEL_W, HEADER_H), (PANEL_W, VIDEO_H)], fill=BAR, width=4)
@@ -221,7 +230,7 @@ def compose(panels, t, caption):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Video of a participant's corrections of a task (2x2 replays).")
+    parser = argparse.ArgumentParser(description="Video of a user's corrections of a task (2x2 replays).")
     parser.add_argument("task", help="task name in tasks/ (without .json)")
     parser.add_argument("user", help="user ID")
     args = parser.parse_args()
