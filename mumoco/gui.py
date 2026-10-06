@@ -42,6 +42,8 @@ CORRECTION_SCREENS = {"physical": ("Physical Correction", "Press the External Ac
                                                               "and tell it what it should do through the microphone.")}
 VISIBLE_ITEMS = 6            # list rows shown at once (the list scrolls with the selection)
 POLL_MS = 20
+SCROLL_MS, SCROLL_HOLD = 180, 8      # text too long for its row scrolls one character per SCROLL_MS,
+                                     # resting SCROLL_HOLD steps at its start and end
 SHUTDOWN_HINT_MS = 5000      # the force-quit hint appears if shutting down takes longer
 
 
@@ -63,6 +65,7 @@ class ExperimentUI:
         self._actions = {}                   # action -> handler of the current screen
         self._waiting = False                # a choose()/ask_yes_no() answer is expected
         self._cleanup = None                 # stops what the current screen runs (video playback)
+        self._scrolling = {}                 # label -> scroll state of its text (_scroll_text)
         self._worker = None
         self.joystick = open_joystick()
 
@@ -96,6 +99,7 @@ class ExperimentUI:
         self._worker = threading.Thread(target=work, daemon=True)
         self._worker.start()
         self.root.after(POLL_MS, self._poll)
+        self.root.after(SCROLL_MS, self._scroll_tick)
         self.root.focus_force()
         self.root.mainloop()
         if self.joystick:
@@ -166,6 +170,42 @@ class ExperimentUI:
                     raise Stopped
 
     # ---------------- window thread ----------------
+    def _scroll_text(self, label, prefix, text):
+        """Show prefix + text in the label. Text too long for the label scrolls slowly sideways (prefix fixed)
+        until all of it was seen, rests, and starts over."""
+        state = self._scrolling.setdefault(label, {"font": tkfont.Font(font=label.cget("font"))})
+        if state.get("text") != text:
+            state.update(text=text, offset=0, hold=SCROLL_HOLD)
+        state["prefix"] = prefix
+        self._render_scroll(label, state)
+
+    def _render_scroll(self, label, state):
+        """Shows the part of the text from state["offset"] that fits; returns whether the rest of the text fits."""
+        room = label.winfo_width() - 2 * (int(label.cget("padx")) + int(label.cget("highlightthickness")) + 2)
+        shown = state["text"][state["offset"]:]
+        if room > 0:                                    # (not laid out yet: Tk clips the full text)
+            room -= state["font"].measure(state["prefix"])
+            while shown and state["font"].measure(shown) > room:
+                shown = shown[:-1]
+        label.configure(text=state["prefix"] + shown)
+        return len(shown) == len(state["text"]) - state["offset"]
+
+    def _scroll_tick(self):
+        for label, state in list(self._scrolling.items()):
+            if not label.winfo_exists():
+                del self._scrolling[label]
+            elif self._render_scroll(label, state) and state["offset"] == 0:
+                continue                                # fits: nothing to scroll
+            elif state["hold"] > 0:
+                state["hold"] -= 1
+            elif self._render_scroll(label, state):     # the end is visible: rest, then start over
+                state.update(offset=0, hold=2 * SCROLL_HOLD)
+                self._render_scroll(label, state)
+            else:
+                state["offset"] += 1
+                state["hold"] = SCROLL_HOLD if self._render_scroll(label, state) else 0   # rest at the end
+        self.root.after(SCROLL_MS, self._scroll_tick)
+
     def _poll(self):
         try:
             while not self._inbox.empty():
@@ -232,6 +272,7 @@ class ExperimentUI:
         self.hint.configure(text=hint)
         for widget in self.body.winfo_children():
             widget.destroy()
+        self._scrolling.clear()
         self._actions = actions or {}
 
     def _button(self, text, action, parent=None):
@@ -265,7 +306,7 @@ class ExperimentUI:
                 i = state["top"] + row
                 on = i == state["sel"]
                 text = options[i] + ("  [Completed]" if i in completed else "")
-                label.configure(text=("\u25B6  " if on else "     ") + text)
+                self._scroll_text(label, "\u25B6  " if on else "     ", text)
                 self._highlight(label, on, i in completed)
 
         def move(step):
@@ -313,17 +354,18 @@ class ExperimentUI:
             for i, label in enumerate(letter_rows):
                 on = i == st["letter"]
                 tag = "  [Completed]" if i in done else "  (not available)" if i in unavailable else ""
-                label.configure(text=("\u25B6  " if on else "     ") + letters[i] + tag)
+                self._scroll_text(label, "\u25B6  " if on else "     ", letters[i] + tag)
                 self._highlight(label, on and st["focus"] == "letters", i in done or i in unavailable)
                 if i == st["chosen"] and st["focus"] != "letters":    # the chosen scenario stays marked
                     label.configure(highlightbackground=ACCENT, highlightcolor=ACCENT)
             for m, label in enumerate(modality_rows):
                 if st["chosen"] is None:                               # modalities appear once a scenario is chosen
-                    label.configure(text="", bg=BG, highlightbackground=BG, highlightcolor=BG)
+                    self._scroll_text(label, "", "")
+                    label.configure(bg=BG, highlightbackground=BG, highlightcolor=BG)
                     continue
                 on = m == st["modality"] and st["focus"] == "modalities"
                 finished = (st["chosen"], m) in completed
-                label.configure(text=("\u25B6  " if on else "     ") + modalities[m] + ("  [Completed]" if finished else ""))
+                self._scroll_text(label, "\u25B6  " if on else "     ", modalities[m] + ("  [Completed]" if finished else ""))
                 self._highlight(label, on, finished)
             self._highlight(example_button, st["focus"] == "example")
 

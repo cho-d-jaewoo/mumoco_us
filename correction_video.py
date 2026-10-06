@@ -1,6 +1,6 @@
 """Video of one user's corrections of a task: four PyBullet replays on one time axis.
 
-    python3 correction_video.py pnp_spill 0          # -> correction_videos/pnp_spill_user0.mp4
+    python3 correction_video.py pnp_spill 17         # -> correction_videos/pnp_spill_17.mp4
 
 Top left: the answer task. Top right / bottom left / bottom right: the task with the user's newest
 physical-only / language-only / multimodal correction (corrections/<task>/<modality folder>/). All panels
@@ -20,7 +20,7 @@ import numpy as np
 import pybullet
 from PIL import Image, ImageDraw, ImageFont
 
-from mumoco.config import CORRECTION_DIR, CORRECTION_FOLDERS, ROOT, VIDEO_FPS, VIDEO_HOLD
+from mumoco.config import CORRECTION_DIR, CORRECTION_FOLDERS, MODALITY_NAMES, ROOT, VIDEO_FPS, VIDEO_HOLD
 from mumoco.sim import find_correction_start, make_simulation, plan_task, play_correction, play_task
 from mumoco.trajectory_utils import active_interval
 from mumoco.utils import find_task_path, load_task, task_base_name
@@ -64,8 +64,10 @@ class JpegFrames(list):
 
 # ---------------- correction files ----------------
 def find_correction(task_name, user, modality):
-    """Newest correction file of the user for the task and modality, or None."""
-    name = re.compile(rf"_{re.escape(user)}_{modality}_\d{{8}}_\d{{6}}\.json$")
+    """Newest correction file of the user for the task and modality, or None. Names end in
+    _<user>_<modality>_<date>_<time>.json: Physical-Only etc. (current), physical etc. (older files)."""
+    kinds = f"{re.escape(MODALITY_NAMES[modality])}|{modality}"
+    name = re.compile(rf"_{re.escape(user)}_(?:{kinds})_\d{{8}}_\d{{6}}\.json$")
     paths = [path for path in (CORRECTION_DIR / task_name / CORRECTION_FOLDERS[modality]).glob("*.json")
              if name.search(path.name)]
     return max(paths, key=lambda path: path.name[-20:]) if paths else None      # date_time.json sorts by time
@@ -254,7 +256,7 @@ def main():
 
     count = max(len(frames) for frames, _, _ in panels)
     OUT_DIR.mkdir(exist_ok=True)
-    out = OUT_DIR / f"{args.task}_user{args.user}.mp4"
+    out = OUT_DIR / f"{args.task}_{args.user}.mp4"         # like the correction files: <task>_<user>
     writer = imageio_ffmpeg.write_frames(str(out), (VIDEO_W, VIDEO_H), fps=VIDEO_FPS, quality=8,
                                          macro_block_size=8)
     writer.send(None)

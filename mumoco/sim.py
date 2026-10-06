@@ -4,7 +4,6 @@ The task is driven exactly as Robot.execute_task drives the real robot: the same
 JointSpline, starting at home with the gripper open. The robot follows the reference with position control.
 """
 
-import importlib.util
 import json
 import os
 import tempfile
@@ -34,11 +33,6 @@ class Simulation:
     def __init__(self, gui=True, speed=1.0, camera=SIM_CAMERA, deformable=False):
         self.gui, self.speed, self.camera = gui, speed, camera
         p.connect(p.GUI if gui else p.DIRECT)
-        if not gui and not deformable:              # GPU rendering (EGL): same images, ~7x faster than the CPU renderer
-                                                    # (not for soft bodies: EGL draws the cloth black)
-            egl = importlib.util.find_spec("eglRenderer")   # (must be loaded before any body)
-            if egl:
-                p.loadPlugin(egl.origin, "_eglRendererPlugin")
         if deformable:                              # soft bodies (cloth); only scenes that need them
             p.resetSimulation(p.RESET_USE_DEFORMABLE_WORLD)
         p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
