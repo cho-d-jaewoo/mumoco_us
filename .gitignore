@@ -22,3 +22,5 @@
 !corrections/**/
 !corrections/**/*.json
 !corrections/**/*.wav
+!correction_video/
+!correction_video/*.mp4
