@@ -1,0 +1,5 @@
+defaults:
+  - cameras@gripper: gripper_realsense
+  - cameras@right_realsense: right_realsense
+  - cameras@left_realsense: left_realsense
+  - _self_

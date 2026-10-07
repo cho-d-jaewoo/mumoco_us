@@ -1,0 +1,8 @@
+_target_: codata.cameras.realsense.RealSenseCamera
+img_shape: [360, 640]
+fps: ${fps}
+serial_number: '233622075120'
+get_rgb: True
+get_depth: True
+enable_ir_emitter: True
+json_settings_path: 'src/cameras/realsense_json_conf/DataCollectionSettings.json'
