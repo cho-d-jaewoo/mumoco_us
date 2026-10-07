@@ -1,0 +1,14 @@
+defaults:
+  # - cameras: orbbec
+  - cameras: all_realsense
+  - override hydra/hydra_logging: disabled  
+  - override hydra/job_logging: disabled
+  - _self_
+
+fps: 30
+port: 8082
+
+hydra:
+  output_subdir: null
+  run:
+    dir: .

@@ -1,0 +1,26 @@
+defaults:
+  - task: jaewoo_pi05
+
+camera_subscriber:
+  topics:
+    - left_realsense_img_rgb
+    - left_realsense_img_depth
+    - right_realsense_img_rgb
+    - right_realsense_img_depth
+    - gripper_img_rgb
+  server_addr: localhost
+  port: 8082
+
+record_freq: 20
+task_description: ${task.task_description}
+task_name: ${task.task_name}
+split: ${task.split}
+num_demos: 500
+save_dir: '/home/collab/Jaewoo/demos'
+# save_dir: '/media/collab/T7/CoData/${task_name}/${split}'
+linear_speed: 0.1
+
+hydra:
+  output_subdir: null
+  run:
+    dir: .

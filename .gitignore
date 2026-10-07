@@ -27,4 +27,4 @@
 !reference/
 !reference/*.py
 !reference/*.cpp
-!reference/*.hdf5
+!reference/*.yaml
