@@ -28,3 +28,10 @@
 !reference/*.py
 !reference/*.cpp
 !reference/*.yaml
+!demo/
+!demo/*.py
+!demo/config/
+!demo/config/*.yaml
+!demo/demos/
+!demo/demos/**/
+!demo/demos/**/*.json

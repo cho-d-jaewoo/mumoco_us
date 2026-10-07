@@ -1,0 +1,32 @@
+# Demonstrations by replaying recorded task waypoints with the cameras on (demo/get_demo.py), and their
+# conversion to a LeRobot dataset for pi0.5 fine-tuning (demo/preprocess_lerobot.py).
+# HDF5 layout as the lab's get_demo.py (codata / GELLO).
+
+camera_subscriber:
+  topics:
+    - left_realsense_img_rgb
+    - left_realsense_img_depth
+    - right_realsense_img_rgb
+    - right_realsense_img_depth
+    - gripper_img_rgb
+  server_addr: localhost
+  port: 8082
+
+record_freq: 20                 # [Hz] samples per second = mumoco command rate (HZ, NUC policy_frequency)
+json_dir: demo/demos            # <json_dir>/<task>/*.json: waypoints made with record_tasks.py
+save_dir: demo/data             # -> <save_dir>/<task>/demo_<n>.hdf5
+end_hold: 0.5                   # [s] recording continues this long after the motion ends
+
+tasks:                          # task name: language instruction stored with every demo (the pi0.5 prompt)
+  pnp:
+    task_description: "pick up the red mug and place it on the other side of the toaster"
+  bit:
+    task_description: "put the slice of bread into the toaster"
+  wtp:
+    task_description: "pick up the cloth and wipe the plate"
+
+lerobot:                        # demo/preprocess_lerobot.py: which camera fills which DROID image
+  exterior_image_1_left: left_realsense_img_rgb
+  exterior_image_2_left: right_realsense_img_rgb   # pi05_droid masks this view; null = black placeholder
+  wrist_image_left: gripper_img_rgb
+  image_size: [224, 224]

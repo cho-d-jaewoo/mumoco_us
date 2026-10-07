@@ -36,6 +36,9 @@ class Robot:
         self.should_stop = should_stop     # checked in every waiting loop -> raises Stopped
         self.gripper_open = None           # measured is_open, streamed by gripper_control_cjw
         self.gripper_target = None         # pending non-blocking command (request_gripper)
+        self.gripper_command = None        # last gripper command sent (True = open)
+        self.last_state = None             # newest arm state read while moving (demo/get_demo.py records it)
+        self.last_qdot = np.zeros(7)       # last velocity command sent [rad/s]
         self.gripper_deadline = 0.0
         self.in_correction = False         # NUC ignores send2robot while in correction mode
         self.correction_requested = False  # set by Ctrl+C, the GUI or the joystick; checked by move_joint
@@ -58,6 +61,16 @@ class Robot:
             time.sleep(0.05)
         print("[INFO] Gripper connected successfully.")
 
+    def read_state(self):
+        self.last_state = self.franka.readState(self.conn)
+        return self.last_state
+
+    def send_velocity(self, qdot):
+        """send2robot, remembering the command as sent (franka.send2robot scales its norm down to 1)."""
+        qdot = np.asarray(qdot, dtype=np.float64)
+        self.last_qdot = qdot * min(1.0, 1.0 / max(np.linalg.norm(qdot), 1e-12))
+        self.franka.send2robot(self.conn, qdot)
+
     def _check_stop(self):
         if self.should_stop():
             raise Stopped
@@ -77,7 +90,7 @@ class Robot:
             if self.correction_requested:
                 raise CorrectionRequested
             t0 = time.monotonic()
-            err = q_goal - self.franka.readState(self.conn)["q"]
+            err = q_goal - self.read_state()["q"]
             e = np.max(np.abs(err))
             if e < JOINT_TOL:
                 break
@@ -90,9 +103,9 @@ class Robot:
                 raise TimeoutError(f"Joint error still {np.round(err, 3)}")
             qdot = GAIN * err
             qdot *= min(1.0, VMAX / np.max(np.abs(qdot)))  # straight line in joint space
-            self.franka.send2robot(self.conn, qdot)
+            self.send_velocity(qdot)
             time.sleep(max(0.0, 1 / HZ - (time.monotonic() - t0)))
-        self.franka.send2robot(self.conn, np.zeros(7))
+        self.send_velocity(np.zeros(7))
         time.sleep(SETTLE_TIME)
 
     def update_gripper(self):
@@ -117,6 +130,7 @@ class Robot:
         if open_ == self.update_gripper():
             return
         self.franka.send2gripper(self.grip, "o" if open_ else "c")
+        self.gripper_command = open_
         deadline = time.monotonic() + GRIPPER_TIMEOUT
         while self.update_gripper() != open_:
             if time.monotonic() > deadline:
@@ -139,6 +153,7 @@ class Robot:
         if self.gripper_busy() or open_ == self.gripper_open:
             return False
         self.franka.send2gripper(self.grip, "o" if open_ else "c")
+        self.gripper_command = open_
         self.gripper_target, self.gripper_deadline = open_, time.monotonic() + GRIPPER_TIMEOUT
         return True
 
@@ -152,15 +167,15 @@ class Robot:
     def follow(self, points):
         """Move smoothly through `points` without stopping (JointSpline from the current configuration,
         velocity feed-forward + P feedback at HZ), then settle on the last point with move_joint."""
-        spline = JointSpline([self.franka.readState(self.conn)["q"], *points], VMAX, AMAX)
+        spline = JointSpline([self.read_state()["q"], *points], VMAX, AMAX)
         start = time.monotonic()
         while (t := time.monotonic() - start) < spline.duration:
             self._check_stop()
             if self.correction_requested:
                 raise CorrectionRequested
             q_ref, qd_ref = spline.sample(t + 1 / HZ)      # aim one command period ahead
-            qdot = qd_ref + GAIN * (q_ref - self.franka.readState(self.conn)["q"])
-            self.franka.send2robot(self.conn, np.clip(qdot, -2 * VMAX, 2 * VMAX))
+            qdot = qd_ref + GAIN * (q_ref - self.read_state()["q"])
+            self.send_velocity(np.clip(qdot, -2 * VMAX, 2 * VMAX))
             time.sleep(max(0.0, 1 / HZ - (time.monotonic() - start - t)))
         self.move_joint(points[-1])
 
