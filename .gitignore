@@ -28,6 +28,7 @@
 !reference/*.py
 !reference/*.cpp
 !reference/*.yaml
+!reference/*.json
 !demo/
 !demo/*.py
 !demo/config/
