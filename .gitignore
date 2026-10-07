@@ -33,6 +33,7 @@
 !demo/*.py
 !demo/config/
 !demo/config/*.yaml
+!demo/config/*.json
 !demo/demos/
 !demo/demos/**/
 !demo/demos/**/*.json

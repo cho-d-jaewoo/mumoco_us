@@ -1,10 +1,5 @@
-# RealSense cameras published over ZMQ: topics <name>_img_rgb (and <name>_img_depth if depth: true), the same
-# names and message format as the lab's codata cameras_publisher (all_realsense), so either publisher works.
-# Serial numbers of the connected cameras: python3 -m demo.cameras_publisher --list
+# RealSense cameras published over ZMQ, as the lab's codata cameras_publisher (all_realsense). The cameras
+# (gripper, right_realsense, left_realsense: serials, 640x360, depth, IR emitter) are fixed in
+# demo/cameras_publisher.py; the RealSense preset is demo/config/DataCollectionSettings.json.
 fps: 30
 port: 8082
-
-cameras:
-  left_realsense:  {serial: "", width: 640, height: 480, depth: true}
-  right_realsense: {serial: "", width: 640, height: 480, depth: true}
-  gripper:         {serial: "", width: 640, height: 480, depth: false}
