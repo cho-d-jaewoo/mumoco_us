@@ -2,6 +2,7 @@
 
     python3 -m demo.cameras_publisher         # (or the lab's codata publisher: same topics)
     python3 -m demo.get_demo pnp              # demo/demos/pnp/*.json -> demo/data/pnp/demo_<n>.hdf5
+    python3 -m demo.get_demo pnp --json pnp_spill --repeat 5    # only the given JSON(s), 5 demos each
 
 Each JSON (made with record_tasks.py, moved to demo/demos/<task>/) is replayed exactly as main.py executes a
 task: from home with the gripper open, smooth through the waypoints, stopping only for the gripper. Meanwhile a
@@ -107,10 +108,17 @@ def main():
     cfg = yaml.safe_load(CONFIG.read_text())
     parser = argparse.ArgumentParser(description="Record demonstrations by replaying task waypoints with the cameras on.")
     parser.add_argument("task", choices=list(cfg["tasks"]), help="task name (demo/demos/<task>/*.json)")
+    parser.add_argument("--json", nargs="+", metavar="NAME", help="only these JSONs of the task (default: all)")
     parser.add_argument("--repeat", type=int, default=1, help="replays of each JSON (default: 1)")
     args = parser.parse_args()
     json_dir, save_dir = ROOT / cfg["json_dir"] / args.task, ROOT / cfg["save_dir"] / args.task
-    files = sorted(json_dir.glob("*.json"))
+    if args.json:
+        files = [json_dir / (name if name.endswith(".json") else f"{name}.json") for name in args.json]
+        missing = [path.name for path in files if not path.is_file()]
+        if missing:
+            parser.error(f"not in {json_dir}/: {', '.join(missing)}")
+    else:
+        files = sorted(json_dir.glob("*.json"))
     if not files:
         parser.error(f"no waypoint files in {json_dir}/ (record them with record_tasks.py)")
     description = cfg["tasks"][args.task]["task_description"]
