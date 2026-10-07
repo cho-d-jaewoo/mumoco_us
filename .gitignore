@@ -24,3 +24,7 @@
 !corrections/**/*.wav
 !correction_video/
 !correction_video/*.mp4
+!reference/
+!reference/*.py
+!reference/*.cpp
+!reference/*.hdf5
