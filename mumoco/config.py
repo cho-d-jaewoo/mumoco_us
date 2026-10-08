@@ -17,8 +17,8 @@ MODALITY_NAMES = {"physical": "Physical-Only", "language": "Language-Only", "mul
 # the error part of its task file, tasks/<short>_<error>.json. None = not implemented yet (shown, not selectable).
 EXPERIMENT_TASKS = {
     "Pick and Place": ("pnp", {"A": "spill", "B": "too_high", "C": "place_on_toaster", "D": None}),
-    "Bread in Toaster": ("bit", {"A": "off_the_slot", "B": "straight_to_goal", "C": "to_the_plate", "D": None}),
-    "Wipe the Plate": ("wtp", {"A": "vertical_swiping", "B": "lose_contact", "C": "no_cloth", "D": None}),
+    "Bread in Toaster": ("bit", {"A": "off_the_slot", "B": "far_from_user", "C": "to_the_plate", "D": None}),
+    "Wipe the Plate": ("wtp", {"A": "lose_contact", "B": "wipe_with_sponge", "C": "no_cloth", "D": None}),
 }
 
 # ---------------- connection (arm_control_cjw.cpp / gripper_control_cjw.cpp) ----------------
@@ -72,8 +72,10 @@ VIDEO_SIZE = (640, 360)      # [px] width, height
 VIDEO_HOLD = (0.8, 1.5)      # [s] still frames before the motion starts and after it ends
 
 # ---------------- simulation scenes, chosen by the task base name (pnp_spill -> "pnp") ----------------
-# bit: objects are placed from the answer task, so every bit task starts from the same scene.
-# pnp: the mug stands where each task grasps it (the toaster position is tuned to those cup heights).
+# bit: toaster and plate are placed from the answer task; the bread stands where each task grasps it.
+# pnp: the mug stands where each task grasps it (the toaster position is tuned to those cup heights);
+#      the dish is where the answer task puts the mug down.
+# wtp: cloth where the answer task grasps it, sponge where wtp_wipe_with_sponge grasps it.
 # Camera: side view with the robot on the left and the task area on the right.
 SCENE_CAMERAS = {
     "pnp": {"cameraDistance": 1.55, "cameraYaw": 5.0, "cameraPitch": -12.0, "cameraTargetPosition": [0.45, 0.0, 0.32]},
@@ -82,6 +84,9 @@ SCENE_CAMERAS = {
 }
 PNP_CUP_SCALE = 1.2          # pybullet_data mug; it stands where the gripper first closes, handle toward the robot
 PNP_TOASTER = {"x": 0.65, "y": -0.035, "scale": 1.0}    # original size, midway between cup and goal:
-                                                         # answer/spill pass above it, down_too_early/straight_to_goal hit it
+                                                         # answer/spill pass above it, place_on_toaster puts the mug on it
+PNP_DISH = {"radius": 0.09, "thickness": 0.008}          # blue dish under the mug where pnp_answer puts it down
 BIT_PLATE = {"x": 0.71, "y": 0.20, "radius": 0.09}   # blue plate where bit_to_the_plate releases the bread
-WTP_PLATE = {"x": 0.69, "y": -0.04, "radius": 0.12}  # white plate under the area wtp_answer wipes
+WTP_PLATE = {"x": 0.69, "y": -0.01, "radius": 0.12}  # white plate under the area wtp_answer wipes
+WTP_SPONGE = {"task": "wtp_wipe_with_sponge",        # sponge stands where this task grasps it
+              "size": [0.10, 0.07, 0.06], "pad": 0.012}  # [m] length, width (across the fingers), height; scour pad below

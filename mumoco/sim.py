@@ -13,8 +13,9 @@ import numpy as np
 import pybullet as p
 import pybullet_data
 
-from .config import (AMAX, BIT_PLATE, CORRECTION_DIR, CORRECTION_FOLDERS, PNP_CUP_SCALE, PNP_TOASTER, ROOT,
-                     SCENE_CAMERAS, SIM_ARM_FORCES, SIM_CAMERA, SIM_DT, SIM_GRIPPER_TIME, VIDEO_FPS, VIDEO_SIZE, VMAX, WTP_PLATE)
+from .config import (AMAX, BIT_PLATE, CORRECTION_DIR, CORRECTION_FOLDERS, PNP_CUP_SCALE, PNP_DISH, PNP_TOASTER, ROOT,
+                     SCENE_CAMERAS, SIM_ARM_FORCES, SIM_CAMERA, SIM_DT, SIM_GRIPPER_TIME, VIDEO_FPS, VIDEO_SIZE, VMAX,
+                     WTP_PLATE, WTP_SPONGE)
 from .franka import Franka
 from .trajectory_utils import JointSpline, task_segments
 from .utils import find_task_path, load_task
@@ -191,14 +192,39 @@ def grasp_and_release(waypoints):
     return waypoints[k]["joint_positions"], release["joint_positions"]
 
 
+def carried_to(sim, waypoints, position):
+    """Where a body at `position`, grasped at the first gripper close of `waypoints`, is when the gripper opens
+    again (it keeps its pose relative to the hand)."""
+    grasp_q, release_q = grasp_and_release(waypoints)
+    in_hand = p.multiplyTransforms(*p.invertTransform(*sim.hand_pose(grasp_q)), list(position), [0, 0, 0, 1])
+    return np.array(p.multiplyTransforms(*sim.hand_pose(release_q), *in_hand)[0])
+
+
+def plate(position, radius, thickness, color):
+    """Flat round plate, bottom center at `position`."""
+    shape = dict(radius=radius)
+    return p.createMultiBody(baseMass=0,
+                             baseCollisionShapeIndex=p.createCollisionShape(p.GEOM_CYLINDER, height=thickness, **shape),
+                             baseVisualShapeIndex=p.createVisualShape(p.GEOM_CYLINDER, length=thickness, rgbaColor=color,
+                                                                      **shape),
+                             basePosition=[position[0], position[1], position[2] + thickness / 2])
+
+
+BLUE = [42 / 255, 143 / 255, 189 / 255, 1]
+
+
 def pnp_scene(sim, task, answer):
     """Red mug whose handle (facing the robot) is where the task itself grasps, on a table at that height,
-    and a toaster between the mug and the goal. (Placed from each task, not from the answer: the toaster
-    position is tuned to the cup heights of the recorded tasks.)"""
+    a toaster between the mug and the goal, and a blue dish where the answer task puts the mug down.
+    (Mug placed from each task, not from the answer: the toaster position is tuned to the cup heights of
+    the recorded tasks.)"""
     s = PNP_CUP_SCALE
     handle = np.array([-0.073, 0.0, 0.05]) * s     # grasp point on the handle, mug turned so the handle faces -x
     cup = np.array(sim.hand_pose(grasp_and_release(task)[0])[0]) - handle
     sim.add_table(cup[2])
+    answer_handle = np.array(sim.hand_pose(grasp_and_release(answer)[0])[0])
+    goal = carried_to(sim, answer, answer_handle - handle)
+    plate([goal[0], goal[1], cup[2]], PNP_DISH["radius"], PNP_DISH["thickness"], BLUE)
     yaw = p.getQuaternionFromEuler([0, 0, np.pi / 2])            # mug.urdf handle points to +y -> -x
     mug = p.loadURDF(os.path.join(DATA, "objects/mug.urdf"), basePosition=cup, baseOrientation=yaw, globalScaling=s)
     p.changeVisualShape(mug, -1, rgbaColor=[0.85, 0.1, 0.1, 1])
@@ -230,26 +256,18 @@ def bread_slice(position):
 
 
 def bit_scene(sim, task, answer):
-    """Bread in toaster: a slice of bread standing where the answer task grasps it, a toaster whose slot
-    is where the answer task drops it, and a blue plate (BIT_PLATE)."""
-    grasp_q, release_q = grasp_and_release(answer)
-    grasp_pos, grasp_orn = sim.hand_pose(grasp_q)
-    bottom = np.array(grasp_pos) - [0, 0, BREAD["grasp"]]
+    """Bread in toaster: a toaster whose slot is where the answer task drops the bread, a blue plate
+    (BIT_PLATE) and a slice of bread standing where the task itself grasps it (table height from the answer)."""
+    bottom = np.array(sim.hand_pose(grasp_and_release(answer)[0])[0]) - [0, 0, BREAD["grasp"]]
     sim.add_table(bottom[2])
-    # where the answer task releases the bread: the bread keeps its pose relative to the hand
-    inv = p.invertTransform(grasp_pos, grasp_orn)
-    in_hand = p.multiplyTransforms(*inv, bottom.tolist(), [0, 0, 0, 1])
-    drop = p.multiplyTransforms(*sim.hand_pose(release_q), *in_hand)[0]
+    drop = carried_to(sim, answer, bottom)
     # toaster turned so its slots run along y; the slot nearer the robot (0.025 m off center) under the drop
     yaw = p.getQuaternionFromEuler([0, 0, np.pi / 2])
     p.loadURDF(str(ROOT / "assets" / "toaster.urdf"), baseOrientation=yaw,
                basePosition=[drop[0] + 0.025, drop[1], bottom[2] + 0.075])
-    plate = p.createVisualShape(p.GEOM_CYLINDER, radius=BIT_PLATE["radius"], length=0.012,
-                                rgbaColor=[42 / 255, 143 / 255, 189 / 255, 1])
-    plate_collision = p.createCollisionShape(p.GEOM_CYLINDER, radius=BIT_PLATE["radius"], height=0.012)
-    p.createMultiBody(baseMass=0, baseCollisionShapeIndex=plate_collision, baseVisualShapeIndex=plate,
-                      basePosition=[BIT_PLATE["x"], BIT_PLATE["y"], bottom[2] + 0.006])
-    bread = bread_slice(bottom)
+    plate([BIT_PLATE["x"], BIT_PLATE["y"], bottom[2]], BIT_PLATE["radius"], 0.012, BLUE)
+    grasp = sim.hand_pose(grasp_and_release(task)[0])[0]
+    bread = bread_slice([grasp[0], grasp[1], bottom[2]])
     sim.no_collision(bread)                        # the hand holds it through a constraint (set_gripper)
     sim.graspable.append(bread)
 
@@ -283,18 +301,34 @@ def cloth_mesh(side, n, hump, radius):
     return obj.name
 
 
+def sponge(position, yaw):
+    """Kitchen sponge (yellow, green scour pad below), bottom center at `position`, its width along `yaw` + 90 deg."""
+    (l, w, h), pad = WTP_SPONGE["size"], WTP_SPONGE["pad"]
+    visual = p.createVisualShapeArray([p.GEOM_BOX] * 2, halfExtents=[[l / 2, w / 2, (h - pad) / 2], [l / 2, w / 2, pad / 2]],
+                                      visualFramePositions=[[0, 0, pad + (h - pad) / 2], [0, 0, pad / 2]],
+                                      rgbaColors=[[0.98, 0.82, 0.25, 1], [0.2, 0.55, 0.3, 1]])
+    collision = p.createCollisionShape(p.GEOM_BOX, halfExtents=[l / 2, w / 2, h / 2], collisionFramePosition=[0, 0, h / 2])
+    return p.createMultiBody(baseMass=0.02, baseCollisionShapeIndex=collision, baseVisualShapeIndex=visual,
+                             basePosition=position, baseOrientation=p.getQuaternionFromEuler([0, 0, yaw]),
+                             baseInertialFramePosition=[0, 0, h / 2])
+
+
 def wtp_scene(sim, task, answer):
     """Wipe the plate: a light, floppy handkerchief laid over a small round hump (like a cave) where the
-    answer task grasps it, so the fingers can pinch its top, and a white plate where the answer task wipes.
+    answer task grasps it, so the fingers can pinch its top, a sponge where wtp_wipe_with_sponge grasps it
+    (WTP_SPONGE) and a white plate where the answer task wipes.
     The hump is an invisible cylinder under the cloth, removed when the cloth is grasped."""
     grasp = np.array(sim.hand_pose(grasp_and_release(answer)[0])[0])
     table = grasp[2] + CLOTH["grip"] - CLOTH["hump"]
     sim.add_table(table)
-    plate = dict(radius=WTP_PLATE["radius"])
-    p.createMultiBody(baseMass=0, baseCollisionShapeIndex=p.createCollisionShape(p.GEOM_CYLINDER, height=0.01, **plate),
-                      baseVisualShapeIndex=p.createVisualShape(p.GEOM_CYLINDER, length=0.01, rgbaColor=[0.95, 0.95, 0.93, 1],
-                                                               **plate),
-                      basePosition=[WTP_PLATE["x"], WTP_PLATE["y"], table + 0.005])
+    plate([WTP_PLATE["x"], WTP_PLATE["y"], table], WTP_PLATE["radius"], 0.01, [0.95, 0.95, 0.93, 1])
+    sponge_task = find_task_path(WTP_SPONGE["task"])
+    if sponge_task:                                # on the table in every wtp task; only that task picks it up
+        position, orientation = sim.hand_pose(grasp_and_release(load_task(sponge_task)["waypoints"])[0])
+        fingers = np.array(p.getMatrixFromQuaternion(orientation)).reshape(3, 3)[:, 1]   # the fingers close along it
+        body = sponge([position[0], position[1], table], np.arctan2(fingers[1], fingers[0]) - np.pi / 2)
+        sim.no_collision(body)                     # the hand holds it through a constraint (set_gripper)
+        sim.graspable.append(body)
     color = np.array([0.55, 0.72, 0.88])
     along_x = p.getQuaternionFromEuler([0, np.pi / 2, 0])
     hump = dict(radius=CLOTH["radius"])
