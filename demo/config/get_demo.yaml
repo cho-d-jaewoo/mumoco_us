@@ -19,11 +19,11 @@ end_hold: 0.5                   # [s] recording continues this long after the mo
 
 tasks:                          # task name: language instruction stored with every demo (the pi0.5 prompt)
   pnp:
-    task_description: "pick up the red mug and place it on the other side of the toaster"
+    task_description: "pick up the red cup and place it on the plate"
   bit:
     task_description: "put the slice of bread into the toaster"
   wtp:
-    task_description: "pick up the cloth and wipe the plate"
+    task_description: "wipe the plate"
 
 lerobot:                        # demo/preprocess_lerobot.py: which camera fills which DROID image
   exterior_image_1_left: left_realsense_img_rgb
