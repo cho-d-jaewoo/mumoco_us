@@ -46,8 +46,9 @@ def quaternion(R):
     return np.array([x, y, z, w])
 
 
-def record_rollout(robot, waypoints, cameras, record_freq, end_hold):
-    """Replay the waypoints while sampling at record_freq; returns (observations, actions, stale samples)."""
+def record_rollout(robot, execute, cameras, record_freq, end_hold):
+    """Run execute() (it moves the robot) while sampling at record_freq; returns (observations, actions,
+    stale samples). Also used by demo/rollout.py for policy rollouts."""
     observations = {key: [] for key in ("joint_state", "ee_state", "gripper_state", "timestep", *cameras.topics)}
     actions = {"joint_vel": [], "ee_vel": [], "gripper_action": []}
     done, stale = threading.Event(), {"count": 0}
@@ -76,7 +77,7 @@ def record_rollout(robot, waypoints, cameras, record_freq, end_hold):
     thread = threading.Thread(target=sample, daemon=True)
     thread.start()
     try:
-        robot.execute_task(waypoints)
+        execute()
         time.sleep(end_hold)
     finally:
         done.set()
@@ -99,8 +100,8 @@ def save_to_hdf5(path, observations, actions, attrs):
             f.attrs[key] = value
 
 
-def next_index(save_dir):
-    indices = [int(path.stem.split("_")[-1]) for path in save_dir.glob("demo_*.hdf5") if path.stem.split("_")[-1].isdigit()]
+def next_index(save_dir, prefix="demo"):
+    indices = [int(path.stem.split("_")[-1]) for path in save_dir.glob(f"{prefix}_*.hdf5") if path.stem.split("_")[-1].isdigit()]
     return max(indices, default=-1) + 1
 
 
@@ -143,7 +144,8 @@ def main():
             if answer == "s":
                 continue
             waypoints = load_task(path)["waypoints"]
-            observations, actions, stale = record_rollout(robot, waypoints, cameras, cfg["record_freq"], cfg["end_hold"])
+            observations, actions, stale = record_rollout(robot, lambda: robot.execute_task(waypoints), cameras,
+                                                          cfg["record_freq"], cfg["end_hold"])
             count = len(observations["joint_state"])
             print(f"[INFO] {count} samples ({count / cfg['record_freq']:.1f} s)")
             if stale:

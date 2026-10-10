@@ -14,11 +14,12 @@ MODALITY_NAMES = {"physical": "Physical-Only", "language": "Language-Only", "mul
 
 # ---------------- experiment tasks (main.py) ----------------
 # High-level task -> (short name, error scenarios). Participants only see the letters; each scenario name is
-# the error part of its task file, tasks/<short>_<error>.json. None = not implemented yet (shown, not selectable).
+# the error part of its task file, tasks/<short>_<error>.json; shown but not selectable while that file is missing.
+# D = a pi0.5 rollout replayed as a task (demo/rollout_to_task.py -> tasks/<short>_policy.json).
 EXPERIMENT_TASKS = {
-    "Pick and Place": ("pnp", {"A": "spill", "B": "too_high", "C": "place_on_toaster", "D": None}),
-    "Bread in Toaster": ("bit", {"A": "off_the_slot", "B": "far_from_user", "C": "to_the_plate", "D": None}),
-    "Wipe the Plate": ("wtp", {"A": "lose_contact", "B": "wipe_with_sponge", "C": "no_cloth", "D": None}),
+    "Pick and Place": ("pnp", {"A": "spill", "B": "too_high", "C": "place_on_toaster", "D": "policy"}),
+    "Bread in Toaster": ("bit", {"A": "off_the_slot", "B": "far_from_user", "C": "to_the_plate", "D": "policy"}),
+    "Wipe the Plate": ("wtp", {"A": "lose_contact", "B": "wipe_with_sponge", "C": "no_cloth", "D": "policy"}),
 }
 
 # ---------------- connection (arm_control_cjw.cpp / gripper_control_cjw.cpp) ----------------
