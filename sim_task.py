@@ -8,7 +8,7 @@
 import argparse
 
 from mumoco.config import ANSWER_DIR, TASK_DIR, VIDEO_HOLD
-from mumoco.sim import make_simulation, plan_task, play_task, save_video
+from mumoco.sim import make_simulation, plan_task, play_task, play_trajectory, save_video
 from mumoco.utils import find_task_path, load_task, task_base_name, task_video_path
 
 
@@ -18,7 +18,10 @@ def make_video(name, show=False, speed=1.0):
     if not show:
         sim.record()
     sim.wait(VIDEO_HOLD[0])                        # start pose
-    play_task(sim, plan_task(task["waypoints"]))
+    if "trajectory" in task:                       # a recorded policy rollout: replayed as recorded
+        play_trajectory(sim, task["trajectory"])
+    else:
+        play_task(sim, plan_task(task["waypoints"]))
     sim.wait(VIDEO_HOLD[1])                        # end pose, released object settles
     if show:
         sim.hold()

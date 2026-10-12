@@ -189,6 +189,37 @@ class Robot:
             if self.correction_requested:
                 raise CorrectionRequested
 
+    def replay(self, trajectory):
+        """Replay a recorded policy rollout (demo/rollout.py; trajectory as load_task returns it) on its own
+        time axis: track the recorded joint positions (velocity feed-forward + P feedback at HZ, as follow)
+        and send the recorded gripper commands when the policy sent them, without waiting for the gripper."""
+        t, q, gripper = trajectory["t"], trajectory["q"], trajectory["gripper_open"]
+        qd = np.gradient(q, t, axis=0)
+        limit = max(2 * VMAX, trajectory["max_speed"])
+        self.move_joint(q[0])
+        start = time.monotonic()
+        while (now := time.monotonic() - start) < t[-1]:
+            self._check_stop()
+            if self.correction_requested:
+                raise CorrectionRequested
+            ahead = now + 1 / HZ                             # aim one command period ahead
+            q_ref = np.array([np.interp(ahead, t, q[:, j]) for j in range(7)])
+            qd_ref = np.array([np.interp(ahead, t, qd[:, j]) for j in range(7)])
+            qdot = qd_ref + GAIN * (q_ref - self.read_state()["q"])
+            self.send_velocity(np.clip(qdot, -limit, limit))
+            self.request_gripper(bool(gripper[max(np.searchsorted(t, now, side="right") - 1, 0)]))
+            time.sleep(max(0.0, 1 / HZ - (time.monotonic() - start - now)))
+        self.send_velocity(np.zeros(7))
+        time.sleep(SETTLE_TIME)
+        self.set_gripper(bool(gripper[-1]))
+
+    def execute(self, task):
+        """Run a task from load_task: a recorded rollout is replayed, otherwise its waypoints are driven."""
+        if "trajectory" in task:
+            self.replay(task["trajectory"])
+        else:
+            self.execute_task(task["waypoints"])
+
     # ---------------- correction (hand-guiding) mode ----------------
     @contextmanager
     def ctrl_c_requests_correction(self):
@@ -285,7 +316,11 @@ def read_terminal_line():
 
 # ---------------- tasks ----------------
 def load_task(path):
-    """Read and validate a task file; raises ValueError if malformed."""
+    """Read and validate a task file; raises ValueError if malformed.
+
+    A recorded policy rollout (demo/rollout.py) is a task file that also has a dense "trajectory"; it is
+    returned as {"t" [s], "q" (N,7) [rad], "gripper_open" (N, commanded), "max_speed" [rad/s]} and replayed
+    by Robot.execute instead of driving the waypoints (which then only summarize the path)."""
     data = json.loads(path.read_text())
     waypoints = []
     for wp in data["waypoints"]:
@@ -297,7 +332,19 @@ def load_task(path):
         waypoints.append({"joint_positions": q, "gripper_open": wp["gripper_open"]})
     if not waypoints:
         raise ValueError("no waypoints")
-    return {"name": path.stem, "waypoints": waypoints}
+    task = {"name": path.stem, "waypoints": waypoints}
+    if "trajectory" in data:
+        samples = data["trajectory"]
+        t = np.array([sample["t"] for sample in samples], dtype=np.float64)
+        q = np.array([sample["q"] for sample in samples], dtype=np.float64)
+        gripper = np.array([sample["gripper_command"] for sample in samples])
+        if len(t) < 2 or q.shape != (len(t), 7) or gripper.dtype != bool or not np.all(np.isfinite(q)):
+            raise ValueError("invalid trajectory")
+        if np.any(np.diff(t) <= 0) or np.any(q < LOWER) or np.any(q > UPPER):
+            raise ValueError("trajectory times must increase and joint positions stay within the limits")
+        task["trajectory"] = {"t": t - t[0], "q": q, "gripper_open": gripper,
+                              "max_speed": float(data.get("settings", {}).get("max_speed", 0.0))}
+    return task
 
 
 def load_tasks():
@@ -366,11 +413,11 @@ def save_task(name, waypoints):
 
 
 # ---------------- physical corrections (dense) ----------------
-def execute_with_correction(robot, waypoints, correct):
-    """Run the task; once robot.correction_requested is set (Ctrl+C, GUI, joystick) the task stops where
-    it is and correct() runs; returns its result. Returns None if the task finished without correction."""
+def execute_with_correction(robot, task, correct):
+    """Run the task (load_task); once robot.correction_requested is set (Ctrl+C, GUI, joystick) the task stops
+    where it is and correct() runs; returns its result. Returns None if the task finished without correction."""
     try:
-        robot.execute_task(waypoints)
+        robot.execute(task)
         return None
     except CorrectionRequested:
         print("\n[INFO] Correction requested. Task execution stopped.")

@@ -396,6 +396,17 @@ def play_task(sim, plan, stop=None):
         sim.set_gripper(gripper_open)
 
 
+def play_trajectory(sim, trajectory):
+    """Replay a recorded policy rollout (load_task's "trajectory") on its own time axis, the gripper
+    following the recorded commands without the arm waiting for it (as Robot.replay)."""
+    t, q, gripper = trajectory["t"], trajectory["q"], trajectory["gripper_open"]
+    qd = np.gradient(q, t, axis=0)
+    for s in np.arange(0.0, t[-1] + SIM_DT, SIM_DT):
+        sim.command([np.interp(s, t, q[:, j]) for j in range(7)], [np.interp(s, t, qd[:, j]) for j in range(7)])
+        sim.set_gripper(bool(gripper[max(np.searchsorted(t, s, side="right") - 1, 0)]), wait=False)
+        sim.step()
+
+
 def save_video(frames, path):
     """Animated WebP (Pillow only); plays in browsers and in the experiment GUI."""
     path.parent.mkdir(parents=True, exist_ok=True)

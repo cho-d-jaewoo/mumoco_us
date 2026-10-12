@@ -353,7 +353,7 @@ class ExperimentUI:
         def refresh():
             for i, label in enumerate(letter_rows):
                 on = i == st["letter"]
-                tag = "  [Completed]" if i in done else "  (not available)" if i in unavailable else ""
+                tag = "  [Completed]" if i in done else "  Unavailable" if i in unavailable else ""
                 self._scroll_text(label, "\u25B6  " if on else "     ", letters[i] + tag)
                 self._highlight(label, on and st["focus"] == "letters", i in done or i in unavailable)
                 if i == st["chosen"] and st["focus"] != "letters":    # the chosen scenario stays marked

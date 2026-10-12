@@ -1,4 +1,5 @@
-"""Trajectory processing: active-interval slicing of physical corrections and smooth task trajectories."""
+"""Trajectory processing: active-interval slicing of physical corrections, smooth task trajectories and
+waypoints of recorded rollouts."""
 
 import numpy as np
 
@@ -67,6 +68,39 @@ class JointSpline:
         q = (2 * u**3 - 3 * u**2 + 1) * p0 + (u**3 - 2 * u**2 + u) * m0 + (3 * u**2 - 2 * u**3) * p1 + (u**3 - u**2) * m1
         qd = (6 * (u**2 - u) * (p0 - p1) + (3 * u**2 - 4 * u + 1) * m0 + (3 * u**2 - 2 * u) * m1) / h
         return q, qd / self.scale
+
+
+def simplify(q, tolerance):
+    """Indices of the points kept by Ramer-Douglas-Peucker on the joint path q (N,7), first and last included."""
+    keep, stack = {0, len(q) - 1}, [(0, len(q) - 1)]
+    while stack:
+        a, b = stack.pop()
+        if b - a < 2:
+            continue
+        line = q[b] - q[a]                                       # closest point on the straight line a -> b
+        s = np.clip((q[a + 1:b] - q[a]) @ line / max(line @ line, 1e-12), 0.0, 1.0)[:, None]
+        error = np.max(np.abs(q[a + 1:b] - (q[a] + s * line)), axis=1)
+        if error.max() > tolerance:
+            k = a + 1 + int(np.argmax(error))
+            keep.add(k)
+            stack += [(a, k), (k, b)]
+    return sorted(keep)
+
+
+def rollout_waypoints(q, gripper_open, tolerance=0.01):
+    """Waypoints summarizing a dense rollout: the joint path q (T,7) and the commanded gripper (T, True =
+    open). Each stretch with one gripper command is reduced to the fewest points that stay within
+    `tolerance` rad of it on every joint; its last point carries the gripper state that follows."""
+    q, gripper_open = np.asarray(q, dtype=np.float64), np.asarray(gripper_open, dtype=bool)
+    changes = [0, *(np.flatnonzero(gripper_open[1:] != gripper_open[:-1]) + 1), len(q) - 1]
+    waypoints = [{"joint_positions": q[0], "gripper_open": bool(gripper_open[0])}]
+    for a, b in zip(changes[:-1], changes[1:]):
+        for i in simplify(q[a:b + 1], tolerance)[1:]:
+            last = waypoints[-1]
+            if last["gripper_open"] == gripper_open[a + i] and np.max(np.abs(q[a + i] - last["joint_positions"])) < JOINT_TOL:
+                continue                                     # the robot stood still
+            waypoints.append({"joint_positions": q[a + i], "gripper_open": bool(gripper_open[a + i])})
+    return waypoints
 
 
 def task_segments(waypoints, gripper_open):

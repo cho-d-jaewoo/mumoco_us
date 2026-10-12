@@ -37,3 +37,8 @@
 !demo/demos/
 !demo/demos/**/
 !demo/demos/**/*.json
+!demo/arc/
+!demo/arc/*.sh
+!demo/rollouts/
+!demo/rollouts/**/
+!demo/rollouts/**/*.json

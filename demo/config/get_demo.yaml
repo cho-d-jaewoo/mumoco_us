@@ -31,12 +31,11 @@ lerobot:                        # demo/preprocess_lerobot.py: which camera fills
   wrist_image_left: gripper_img_rgb
   image_size: [224, 224]
 
-rollout:                        # demo/rollout.py: pi0.5 on the robot, served by openpi serve_policy (e.g. on ARC)
-  host: localhost               # through an SSH tunnel: ssh -N -L 8000:<GPU node>:8000 <user>@tinkercliffs1.arc.vt.edu
-  port: 8000
-  hz: 20                        # [Hz] control rate: 20 = our demos (fine-tuned models), 15 = DROID (pi05_droid as is)
-  open_loop_horizon: 8          # actions executed from each predicted chunk before the next inference
+rollout:                        # demo/rollout.py: pi0.5 on the robot, served on ARC (demo/arc/serve.sh)
+  host: localhost               # through the SSH tunnel serve.sh prints (ssh -N -J <login node> -L 9000:localhost:9000 <GPU node>)
+  port: 9000
+  hz: 20                        # [Hz] control rate = rate of the demos
   action_scale: 1.0             # joint velocity command [rad/s] = action_scale * action[:7]
   max_speed: 0.6                # [rad/s] per joint, larger commands are clipped
   max_time: 60                  # [s] a rollout ends after this (or Ctrl+C)
-  save_dir: demo/rollouts       # -> <save_dir>/<task>/<tag>/rollout_<n>.hdf5 (same layout as the demos)
+  save_dir: demo/rollouts       # -> <save_dir>/<task>/<task>_<policy>_<time>.json (robot trajectory only)

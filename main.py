@@ -53,7 +53,7 @@ def correct_task(robot, task, ui, user, modality, mic, transcriber, title):
         return samples, recording, stop
 
     ui.show_execution(title, request_correction)
-    result = execute_with_correction(robot, task["waypoints"], correct)
+    result = execute_with_correction(robot, task, correct)
     if result is None:
         return "Task Completed", False
     samples, recording, stop = result
@@ -136,7 +136,7 @@ def experiment(ui):
             short, errors = EXPERIMENT_TASKS[title]
             letters, ready = list(errors), implemented(title)
             choice = ui.choose_scenario(
-                "Choose Error Scenario and Correction Modality", title, letters,
+                "Choose Error Scenario\nand Correction Modality", title, letters,
                 [MODALITY_NAMES[m] for m in MODALITIES],
                 unavailable=[i for i, letter in enumerate(letters) if letter not in ready],
                 completed=[(i, j) for i, letter in enumerate(letters) for j, m in enumerate(MODALITIES)
