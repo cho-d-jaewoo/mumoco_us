@@ -56,7 +56,9 @@ class PolicyClient:
         waiting = False
         while True:
             try:
-                ws = websockets.sync.client.connect(self.uri, compression=None, max_size=None)
+                # No keepalive pings: the server cannot answer them while it computes (its first inference
+                # compiles the model and takes much longer than the ping timeout), which would close the connection.
+                ws = websockets.sync.client.connect(self.uri, compression=None, max_size=None, ping_interval=None)
                 return ws, unpackb(ws.recv())
             except (OSError, websockets.exceptions.WebSocketException, EOFError) as e:
                 if not waiting:
@@ -95,6 +97,18 @@ class PolicyClient:
         with self._lock:
             self._observation = observation
         self._new.set()
+
+    def warm_up(self, observation):
+        """Run one inference and wait for it: the first one after the server starts compiles the model
+        (up to a few minutes), which must not happen while the robot waits for its first action."""
+        self.post(observation)
+        while not self.chunks:
+            if self.error:
+                raise RuntimeError(f"Policy server: {self.error}")
+            time.sleep(0.1)
+        seconds = self.latencies[0]
+        self.clear()
+        return seconds
 
     def next_action(self):
         """(action (8,), chunk number, index in the chunk), or None while no action is buffered."""

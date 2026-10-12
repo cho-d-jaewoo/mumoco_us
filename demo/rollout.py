@@ -51,6 +51,18 @@ def resize(image, size):
     return np.asarray(Image.fromarray(image).resize(tuple(size), Image.BILINEAR))
 
 
+def make_observation(robot, cameras, q, prompt, views, size):
+    """What the policy sees: the two camera images, joint positions, gripper (1 = closed) and the prompt."""
+    frames = cameras.get_last_frames()
+    return {
+        "observation/exterior_image_1_left": resize(frames[views["exterior_image_1_left"]], size),
+        "observation/wrist_image_left": resize(frames[views["wrist_image_left"]], size),
+        "observation/joint_position": np.asarray(q, dtype=np.float32),
+        "observation/gripper_position": np.array([0.0 if robot.gripper_open else 1.0], dtype=np.float32),
+        "prompt": prompt,
+    }
+
+
 def run_policy(robot, cameras, policy, prompt, views, size, rc):
     """Execute the policy at rc["hz"] until max_time or Ctrl+C; returns one sample per control tick and the
     time each action chunk took to arrive [s]."""
@@ -64,14 +76,7 @@ def run_policy(robot, cameras, policy, prompt, views, size, rc):
                 raise RuntimeError(f"Policy server connection lost: {policy.error}")
             q = robot.read_state()["q"]
             robot.update_gripper()
-            frames = cameras.get_last_frames()
-            policy.post({
-                "observation/exterior_image_1_left": resize(frames[views["exterior_image_1_left"]], size),
-                "observation/wrist_image_left": resize(frames[views["wrist_image_left"]], size),
-                "observation/joint_position": np.asarray(q, dtype=np.float32),
-                "observation/gripper_position": np.array([0.0 if robot.gripper_open else 1.0], dtype=np.float32),
-                "prompt": prompt,
-            })
+            policy.post(make_observation(robot, cameras, q, prompt, views, size))
             step = policy.next_action()
             qdot = np.zeros(7)                           # no action buffered: stand still
             if step is not None:
@@ -153,6 +158,9 @@ def main():
     robot = Robot()
     try:
         robot.go_home()
+        print("[INFO] Warming up the policy (the first inference after the server starts can take minutes)...")
+        seconds = policy.warm_up(make_observation(robot, cameras, robot.read_state()["q"], prompt, views, size))
+        print(f"[INFO] Policy ready (first inference {seconds:.1f} s).")
         while True:
             if input("\nSet up the scene, then Enter = run the policy (Ctrl+C ends it), q = quit: ").strip().lower() == "q":
                 break
