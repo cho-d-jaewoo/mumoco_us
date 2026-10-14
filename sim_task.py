@@ -9,12 +9,12 @@ import argparse
 
 from mumoco.config import ANSWER_DIR, TASK_DIR, VIDEO_HOLD
 from mumoco.sim import make_simulation, plan_task, play_task, play_trajectory, save_video
-from mumoco.utils import find_task_path, load_task, task_base_name, task_video_path
+from mumoco.utils import find_task_path, load_task, task_video_path
 
 
 def make_video(name, show=False, speed=1.0):
     task = load_task(find_task_path(name))
-    sim = make_simulation(task_base_name(name), task["waypoints"], gui=show, speed=speed)
+    sim = make_simulation(name, task["waypoints"], gui=show, speed=speed)
     if not show:
         sim.record()
     sim.wait(VIDEO_HOLD[0])                        # start pose
@@ -22,7 +22,7 @@ def make_video(name, show=False, speed=1.0):
         play_trajectory(sim, task["trajectory"])
     else:
         play_task(sim, plan_task(task["waypoints"]))
-    sim.wait(VIDEO_HOLD[1])                        # end pose, released object settles
+    sim.wait(task["end_hold"] + VIDEO_HOLD[1])     # the task's own hold, then the end pose (released object settles)
     if show:
         sim.hold()
     else:

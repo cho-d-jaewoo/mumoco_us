@@ -1,5 +1,6 @@
 {
-  "name": "drop_cloth",
+  "name": "wtp_drop_cloth",
+  "end_hold": 5.0,
   "waypoints": [
     {"joint_positions": [-0.239033, -0.522767, 0.140901, -2.348227, 0.047978, 1.853366, 0.636993], "gripper_open": true},
     {"joint_positions": [-0.587659, -0.509905, 0.138931, -2.472371, 0.048073, 1.982831, 0.440019], "gripper_open": true},

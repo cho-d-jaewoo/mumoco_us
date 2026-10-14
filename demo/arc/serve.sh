@@ -1,6 +1,6 @@
 #!/bin/bash
-# Serve a pi0.5 policy for demo/rollout.py. Run on an ARC GPU node (inside `interact ... --gres=gpu:1`),
-# from the openpi folder:
+# Serve a pi0.5 policy for demo/rollout.py. Run on an ARC GPU node (inside `interact ... --gres=gpu:1`; any
+# cluster and GPU with more than 8 GB, e.g. TinkerCliffs a100/h200 or Falcon a30/l40s), from the openpi folder:
 #     bash <path>/serve.sh pnp 9999        # checkpoints/pnp/pnp_v1/9999 (fine-tuned, training config pnp)
 #     bash <path>/serve.sh pnp             # list the saved steps of pnp
 #     bash <path>/serve.sh base            # pi05_droid as is
@@ -20,7 +20,7 @@ export PATH=$HOME/.local/bin:$PATH
 export OPENPI_DATA_HOME="$PWD/openpi_cache"
 echo "============================================================"
 echo "Serving $name on $(hostname):$port. On the robot PC:"
-echo "  ssh -N -J $USER@tinkercliffs1.arc.vt.edu -L $port:localhost:$port $USER@$(hostname)"
+echo "  ssh -N -L $port:$(hostname):$port $USER@${SLURM_CLUSTER_NAME:-tinkercliffs}1.arc.vt.edu"
 echo "  python3 -m demo.rollout ${task/base/<task>} --policy $name"
 echo "============================================================"
 uv run scripts/serve_policy.py --port "$port" policy:checkpoint --policy.config="$config" --policy.dir="$dir"

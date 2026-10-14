@@ -1,7 +1,9 @@
 """Experiment GUI: run a saved task and record physical, language or multimodal corrections.
 
-Flow: connect -> home -> user ID -> select task -> select error scenario (A-D) and modality -> home -> instructions
-      -> START: execute -> START: correction -> START: finish -> (speech to text) -> save? -> home -> select task ...
+Flow: connect -> home -> user ID -> (select task) -> select error scenario (A-D) and modality -> home -> instructions
+      -> START: execute -> START: correction -> START: finish -> (speech to text) -> save? -> home -> select ...
+The user ID gives the participant's task (1, 4, 7, ... = the first task of EXPERIMENT_TASKS, 2, 5, 8, ... the
+second, 3, 6, 9, ... the third), so the task selection is skipped; only user ID 0 chooses among all tasks.
 Correction: physical = guide the robot; language = the robot stands still while the microphone records;
 multimodal = guide the robot while the microphone records.
 Participants see only the high-level tasks and scenario letters (EXPERIMENT_TASKS in config.py); the error
@@ -115,9 +117,12 @@ def experiment(ui):
                   "Returning to home...", "moving")
         robot.go_home()
         user = ui.ask_user_id()
-        print(f"[INFO] User ID: {user}")
         completed = set()                                # (short name, error, modality) with a saved correction
         titles = list(EXPERIMENT_TASKS)
+        # Each participant does one task, given by the user ID: 1, 4, 7, ... the first task, 2, 5, 8, ... the
+        # second, 3, 6, 9, ... the third. User ID 0 chooses among all tasks.
+        assigned = titles[(int(user) - 1) % len(titles)] if int(user) else None
+        print(f"[INFO] User ID: {user} ({assigned or 'all tasks'})")
 
         def implemented(title):                          # letter -> error, for scenarios with a task file
             short, errors = EXPERIMENT_TASKS[title]
@@ -129,10 +134,10 @@ def experiment(ui):
 
         while True:
             done = [i for i, title in enumerate(titles) if task_done(title)]
-            if len(done) == len(titles):
+            if task_done(assigned) if assigned else len(done) == len(titles):
                 ui.status("All Tasks Completed", "Thank you for participating!")
                 return
-            title = titles[ui.choose("Select Task", titles, completed=done)]
+            title = assigned or titles[ui.choose("Select Task", titles, completed=done)]
             short, errors = EXPERIMENT_TASKS[title]
             letters, ready = list(errors), implemented(title)
             choice = ui.choose_scenario(

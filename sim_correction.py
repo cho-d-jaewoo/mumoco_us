@@ -9,7 +9,7 @@ from pathlib import Path
 
 from mumoco.sim import (find_correction_start, load_correction, make_simulation, newest_correction, plan_task,
                         play_correction, play_task)
-from mumoco.utils import find_task_path, load_task, task_base_name
+from mumoco.utils import find_task_path, load_task
 
 
 def main():
@@ -39,7 +39,7 @@ def main():
     if distance > 0.1:
         print("[WARNING] The correction does not start on the task path; the robot jumps to its start.")
 
-    sim = make_simulation(task_base_name(args.task), task["waypoints"], gui=not args.no_gui, speed=args.speed)
+    sim = make_simulation(args.task, task["waypoints"], gui=not args.no_gui, speed=args.speed)
     print(f"[SIM] Following task: {task['name']}")
     play_task(sim, plan, stop=(segment, t))
     print("[SIM] Physical correction (recorded)")

@@ -213,12 +213,25 @@ class Robot:
         time.sleep(SETTLE_TIME)
         self.set_gripper(bool(gripper[-1]))
 
+    def wait(self, seconds):
+        """Stand still for `seconds` as part of a task: a correction can still be requested meanwhile."""
+        start = time.monotonic()
+        while (t0 := time.monotonic()) - start < seconds:
+            self._check_stop()
+            if self.correction_requested:
+                raise CorrectionRequested
+            self.send_velocity(np.zeros(7))
+            self.read_state()
+            time.sleep(max(0.0, 1 / HZ - (time.monotonic() - t0)))
+
     def execute(self, task):
-        """Run a task from load_task: a recorded rollout is replayed, otherwise its waypoints are driven."""
+        """Run a task from load_task: a recorded rollout is replayed, otherwise its waypoints are driven;
+        then the robot stays where it ended for the task's end_hold."""
         if "trajectory" in task:
             self.replay(task["trajectory"])
         else:
             self.execute_task(task["waypoints"])
+        self.wait(task["end_hold"])
 
     # ---------------- correction (hand-guiding) mode ----------------
     @contextmanager
@@ -318,6 +331,8 @@ def read_terminal_line():
 def load_task(path):
     """Read and validate a task file; raises ValueError if malformed.
 
+    "end_hold" [s] (optional): how long the robot stays at the end before the task counts as finished, so
+    that an error that only shows at the end (e.g. after the gripper opens) can still be corrected.
     A recorded policy rollout (demo/rollout.py) is a task file that also has a dense "trajectory"; it is
     returned as {"t" [s], "q" (N,7) [rad], "gripper_open" (N, commanded), "max_speed" [rad/s]} and replayed
     by Robot.execute instead of driving the waypoints (which then only summarize the path)."""
@@ -332,7 +347,10 @@ def load_task(path):
         waypoints.append({"joint_positions": q, "gripper_open": wp["gripper_open"]})
     if not waypoints:
         raise ValueError("no waypoints")
-    task = {"name": path.stem, "waypoints": waypoints}
+    end_hold = data.get("end_hold", 0.0)
+    if isinstance(end_hold, bool) or not isinstance(end_hold, (int, float)) or not 0 <= end_hold < 60:
+        raise ValueError("end_hold must be a number of seconds (0-60)")
+    task = {"name": path.stem, "waypoints": waypoints, "end_hold": float(end_hold)}
     if "trajectory" in data:
         samples = data["trajectory"]
         t = np.array([sample["t"] for sample in samples], dtype=np.float64)

@@ -19,7 +19,7 @@ MODALITY_NAMES = {"physical": "Physical-Only", "language": "Language-Only", "mul
 EXPERIMENT_TASKS = {
     "Pick and Place": ("pnp", {"A": "spill", "B": "too_high", "C": "place_on_toaster", "D": "policy"}),
     "Bread in Toaster": ("bit", {"A": "off_the_slot", "B": "far_from_user", "C": "to_the_plate", "D": "policy"}),
-    "Wipe the Plate": ("wtp", {"A": "lose_contact", "B": "wipe_with_sponge", "C": "no_cloth", "D": "policy"}),
+    "Wipe the Plate": ("wtp", {"A": "lose_contact", "B": "wipe_with_sponge", "C": "drop_cloth", "D": "policy"}),
 }
 
 # ---------------- connection (arm_control_cjw.cpp / gripper_control_cjw.cpp) ----------------
@@ -86,6 +86,8 @@ SCENE_CAMERAS = {
 PNP_CUP_SCALE = 1.2          # pybullet_data mug; it stands where the gripper first closes, handle toward the robot
 PNP_TOASTER = {"x": 0.65, "y": -0.035, "scale": 1.0}    # original size, midway between cup and goal:
                                                          # answer/spill pass above it, place_on_toaster puts the mug on it
+PNP_CUP_MISSED = {"pnp_policy": 0.03}                    # tasks whose gripper closes short of the mug: it stands this
+                                                         # far [m] beyond (toward the toaster) and is not picked up
 PNP_DISH = {"radius": 0.09, "thickness": 0.008}          # blue dish under the mug where pnp_answer puts it down
 BIT_PLATE = {"x": 0.71, "y": 0.20, "radius": 0.09}   # blue plate where bit_to_the_plate releases the bread
 WTP_PLATE = {"x": 0.69, "y": -0.01, "radius": 0.12}  # white plate under the area wtp_answer wipes

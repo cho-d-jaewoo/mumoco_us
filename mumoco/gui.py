@@ -341,7 +341,8 @@ class ExperimentUI:
 
     def _scenario_screen(self, title, subtitle, letters, modalities, unavailable, completed, example, state=None):
         """Three columns: "Task Example" | error scenarios | correction modalities (shown once a scenario is
-        chosen). Left / Right move between the columns, Up / Down within one, Y confirms, X goes back."""
+        chosen, hidden again when the cursor moves to another scenario). Left / Right move between the
+        columns, Up / Down within one, Y confirms, X goes back."""
         done = {i for i in range(len(letters)) if all((i, m) in completed for m in range(len(modalities)))}
         open_letters = [i for i in range(len(letters)) if i not in unavailable and i not in done]
         st = state or {"focus": "letters", "letter": open_letters[0] if open_letters else 0, "chosen": None,
@@ -375,7 +376,9 @@ class ExperimentUI:
             ahead = [i for i in column if (i - st[key]) * step > 0]
             if ahead:
                 st[key] = min(ahead, key=lambda i: abs(i - st[key]))
-                refresh()
+                if st["focus"] == "letters" and st["chosen"] != st["letter"]:
+                    st["chosen"] = None                                # another scenario: its modalities show
+                refresh()                                              # only once it is chosen
 
         def choose_letter(i):
             if i in open_letters:

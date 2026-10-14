@@ -110,9 +110,9 @@ def correction_events(correction, trajectory, span, shift):
 
 
 # ---------------- simulation ----------------
-def simulate(base, waypoints, correction=None, path=None):
+def simulate(name, waypoints, correction=None, path=None):
     """Frames of one panel (VIDEO_FPS, from video time 0) and its correction events (None: plain task)."""
-    sim = make_simulation(base, waypoints, gui=False)
+    sim = make_simulation(name, waypoints, gui=False)
     sim.size = (PANEL_W, SCENE_H)
     sim.record()
     sim.frames = JpegFrames()
@@ -246,12 +246,12 @@ def main():
     for title, modality in PANELS:
         if modality is None:
             print(f"[SIM] {title}: {answer_path.stem}")
-            frames, events = simulate(base, load_task(answer_path)["waypoints"])
+            frames, events = simulate(answer_path.stem, load_task(answer_path)["waypoints"])
         else:
             path = find_correction(args.task, args.user, modality)
             print(f"[SIM] {title}: {path.relative_to(ROOT) if path else 'no correction of this user -> task only'}")
             correction = json.loads(path.read_text()) if path else None
-            frames, events = simulate(base, load_task(task_path)["waypoints"], correction, path)
+            frames, events = simulate(args.task, load_task(task_path)["waypoints"], correction, path)
         panels.append((frames, title, events))
 
     count = max(len(frames) for frames, _, _ in panels)

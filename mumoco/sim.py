@@ -13,12 +13,12 @@ import numpy as np
 import pybullet as p
 import pybullet_data
 
-from .config import (AMAX, BIT_PLATE, CORRECTION_DIR, CORRECTION_FOLDERS, PNP_CUP_SCALE, PNP_DISH, PNP_TOASTER, ROOT,
+from .config import (AMAX, BIT_PLATE, CORRECTION_DIR, CORRECTION_FOLDERS, PNP_CUP_MISSED, PNP_CUP_SCALE, PNP_DISH, PNP_TOASTER, ROOT,
                      SCENE_CAMERAS, SIM_ARM_FORCES, SIM_CAMERA, SIM_DT, SIM_GRIPPER_TIME, VIDEO_FPS, VIDEO_SIZE, VMAX,
                      WTP_PLATE, WTP_SPONGE)
 from .franka import Franka
 from .trajectory_utils import JointSpline, task_segments
-from .utils import find_task_path, load_task
+from .utils import find_task_path, load_task, task_base_name
 
 HOME = Franka().home
 EE_LINK = 11                        # panda_grasptarget in pybullet_data's panda.urdf
@@ -46,6 +46,7 @@ class Simulation:
         self.time, self.wall_start, self.gripper_open = 0.0, None, True
         self.frames, self.next_frame = None, 0.0
         self.size = VIDEO_SIZE                     # [px] rendered frames (width, height)
+        self.task_name = None                      # set by make_simulation: scenes may depend on the task
         self.reset(HOME)
 
     def add_table(self, top=0.0):
@@ -217,10 +218,13 @@ def pnp_scene(sim, task, answer):
     """Red mug whose handle (facing the robot) is where the task itself grasps, on a table at that height,
     a toaster between the mug and the goal, and a blue dish where the answer task puts the mug down.
     (Mug placed from each task, not from the answer: the toaster position is tuned to the cup heights of
-    the recorded tasks.)"""
+    the recorded tasks.) In the tasks of PNP_CUP_MISSED the gripper closes short of the mug: it stands that
+    far beyond, toward the toaster, and stays on the table."""
     s = PNP_CUP_SCALE
     handle = np.array([-0.073, 0.0, 0.05]) * s     # grasp point on the handle, mug turned so the handle faces -x
     cup = np.array(sim.hand_pose(grasp_and_release(task)[0])[0]) - handle
+    missed = PNP_CUP_MISSED.get(sim.task_name, 0.0)
+    cup[0] += missed
     sim.add_table(cup[2])
     answer_handle = np.array(sim.hand_pose(grasp_and_release(answer)[0])[0])
     goal = carried_to(sim, answer, answer_handle - handle)
@@ -232,7 +236,8 @@ def pnp_scene(sim, task, answer):
     p.loadURDF(str(ROOT / "assets" / "toaster.urdf"), globalScaling=k, baseOrientation=yaw,
                basePosition=[PNP_TOASTER["x"], PNP_TOASTER["y"], cup[2] + 0.075 * k])
     sim.no_collision(mug)                          # the hand holds it through a constraint (set_gripper)
-    sim.graspable.append(mug)
+    if not missed:
+        sim.graspable.append(mug)
 
 
 BREAD = {"width": 0.11, "thickness": 0.015, "height": 0.125, "grasp": 0.105}   # [m]; grasped 2 cm below the top
@@ -358,10 +363,12 @@ SCENES = {"pnp": pnp_scene, "bit": bit_scene, "wtp": wtp_scene}
 DEFORMABLE = {"wtp"}                               # scenes with soft bodies
 
 
-def make_simulation(base_name, waypoints, gui=True, speed=1.0):
+def make_simulation(task_name, waypoints, gui=True, speed=1.0):
     """Scene for the task's base name (pnp_spill -> "pnp"); scenes get the task and the base's answer task.
     Robot and table only for other tasks."""
+    base_name = task_base_name(task_name)
     sim = Simulation(gui, speed, SCENE_CAMERAS.get(base_name, SIM_CAMERA), deformable=base_name in DEFORMABLE)
+    sim.task_name = task_name
     answer_path = find_task_path(f"{base_name}_answer")
     answer = load_task(answer_path)["waypoints"] if answer_path else waypoints
     if base_name in SCENES and not all(w["gripper_open"] for w in answer):
