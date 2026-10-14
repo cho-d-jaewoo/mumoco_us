@@ -119,14 +119,21 @@ class ExperimentUI:
         self._inbox.put((self._list_screen, (title, options, back, subtitle, set(completed))))
         return self._wait_answer()
 
-    def choose_scenario(self, title, subtitle, letters, modalities, unavailable=(), completed=(), example=None):
-        """Error scenario (letters) and correction modality on one screen. Blocks; returns
-        (letter index, modality index), or None to go back. unavailable: letters shown but not selectable;
-        completed: (letter index, modality index) pairs already done (a letter with all modalities done is
-        completed too). example: a task name whose video "Task Example" shows."""
-        self._inbox.put((self._scenario_screen, (title, subtitle, letters, modalities, set(unavailable),
-                                                 set(completed), example)))
+    def choose_modality(self, title, subtitle, modalities, completed=(), example=None):
+        """Correction modality, next to a "Task Example" button (the video of the task named `example`).
+        Blocks; returns the modality index, or None to go back. completed: indices shown but not selectable."""
+        self._inbox.put((self._modality_screen, (title, subtitle, modalities, set(completed), example)))
         return self._wait_answer()
+
+    def roll_scenario(self, title, subtitle, done, total):
+        """"Roll Next Scenario" screen showing done / total. Blocks; returns True to roll, None to go back."""
+        self._inbox.put((self._roll_screen, (title, subtitle, done, total)))
+        return self._wait_answer()
+
+    def notify(self, title, text):
+        """Message with an OK button; blocks until it is confirmed."""
+        self._inbox.put((self._notice_screen, (title, text)))
+        self._wait_answer()
 
     def ask_user_id(self, title="Enter Your User ID"):
         """Blocks until a numeric user ID is entered; returns it as a string."""
@@ -339,112 +346,87 @@ class ExperimentUI:
         refresh()
         self._waiting = True
 
-    def _scenario_screen(self, title, subtitle, letters, modalities, unavailable, completed, example, state=None):
-        """Three columns: "Task Example" | error scenarios | correction modalities (shown once a scenario is
-        chosen, hidden again when the cursor moves to another scenario). Left / Right move between the
-        columns, Up / Down within one, Y confirms, X goes back."""
-        done = {i for i in range(len(letters)) if all((i, m) in completed for m in range(len(modalities)))}
-        open_letters = [i for i in range(len(letters)) if i not in unavailable and i not in done]
-        st = state or {"focus": "letters", "letter": open_letters[0] if open_letters else 0, "chosen": None,
-                       "modality": 0}
-
-        def open_modalities():
-            return [m for m in range(len(modalities)) if st["chosen"] is not None and (st["chosen"], m) not in completed]
+    def _modality_screen(self, title, subtitle, modalities, completed, example, state=None):
+        """Two columns: "Task Example" | correction modalities (completed ones are skipped). Left / Right move
+        between the columns, Up / Down within the modalities, Y confirms, X goes back."""
+        open_rows = [m for m in range(len(modalities)) if m not in completed]
+        st = state or {"focus": "modalities", "modality": open_rows[0] if open_rows else 0}
 
         def refresh():
-            for i, label in enumerate(letter_rows):
-                on = i == st["letter"]
-                tag = "  [Completed]" if i in done else "  Unavailable" if i in unavailable else ""
-                self._scroll_text(label, "\u25B6  " if on else "     ", letters[i] + tag)
-                self._highlight(label, on and st["focus"] == "letters", i in done or i in unavailable)
-                if i == st["chosen"] and st["focus"] != "letters":    # the chosen scenario stays marked
-                    label.configure(highlightbackground=ACCENT, highlightcolor=ACCENT)
-            for m, label in enumerate(modality_rows):
-                if st["chosen"] is None:                               # modalities appear once a scenario is chosen
-                    self._scroll_text(label, "", "")
-                    label.configure(bg=BG, highlightbackground=BG, highlightcolor=BG)
-                    continue
+            for m, label in enumerate(rows):
                 on = m == st["modality"] and st["focus"] == "modalities"
-                finished = (st["chosen"], m) in completed
-                self._scroll_text(label, "\u25B6  " if on else "     ", modalities[m] + ("  [Completed]" if finished else ""))
-                self._highlight(label, on, finished)
+                self._scroll_text(label, "\u25B6  " if on else "     ",
+                                  modalities[m] + ("  [Completed]" if m in completed else ""))
+                self._highlight(label, on, m in completed)
             self._highlight(example_button, st["focus"] == "example")
 
         def move(step):
-            column = {"letters": open_letters, "modalities": open_modalities()}.get(st["focus"], [])
-            key = "letter" if st["focus"] == "letters" else "modality"
-            ahead = [i for i in column if (i - st[key]) * step > 0]
-            if ahead:
-                st[key] = min(ahead, key=lambda i: abs(i - st[key]))
-                if st["focus"] == "letters" and st["chosen"] != st["letter"]:
-                    st["chosen"] = None                                # another scenario: its modalities show
-                refresh()                                              # only once it is chosen
-
-        def choose_letter(i):
-            if i in open_letters:
-                st["letter"], st["chosen"], st["focus"] = i, i, "modalities"
-                st["modality"] = (open_modalities() or [0])[0]
+            ahead = [m for m in open_rows if (m - st["modality"]) * step > 0]
+            if st["focus"] == "modalities" and ahead:
+                st["modality"] = min(ahead, key=lambda m: abs(m - st["modality"]))
                 refresh()
+
+        def set_focus(focus):
+            st["focus"] = focus
+            refresh()
 
         def confirm():
             if st["focus"] == "example":
                 show_example()
-            elif st["focus"] == "letters":
-                choose_letter(st["letter"])
-            elif st["modality"] in open_modalities():
-                self._answer((st["chosen"], st["modality"]))
-
-        def left():
-            st["focus"] = {"modalities": "letters", "letters": "example"}.get(st["focus"], st["focus"])
-            refresh()
-
-        def right():
-            st["focus"] = {"example": "letters", "letters": "modalities" if st["chosen"] is not None else "letters"
-                           }.get(st["focus"], st["focus"])
-            refresh()
-
-        def back():
-            if st["focus"] == "modalities":                            # undo the scenario choice
-                st["focus"], st["chosen"] = "letters", None
-                refresh()
-            else:
-                self._answer(None)
-
-        def show_example():
-            self._example_screen(subtitle, example, lambda: self._scenario_screen(
-                title, subtitle, letters, modalities, unavailable, completed, example, st))
+            elif st["modality"] in open_rows:
+                self._answer(st["modality"])
 
         def click_modality(m):
-            if m in open_modalities():
+            if m in open_rows:
                 st["modality"], st["focus"] = m, "modalities"
                 refresh()
 
-        actions = {"up": lambda: move(-1), "down": lambda: move(1), "left": left, "right": right,
-                   "confirm": confirm, "yes": confirm, "no": back, "cancel": back, "example": show_example}
+        def show_example():
+            self._example_screen(subtitle, example, lambda: self._modality_screen(
+                title, subtitle, modalities, completed, example, st))
+
+        actions = {"up": lambda: move(-1), "down": lambda: move(1), "left": lambda: set_focus("example"),
+                   "right": lambda: set_focus("modalities"), "confirm": confirm, "yes": confirm,
+                   "no": lambda: self._answer(None), "cancel": lambda: self._answer(None), "example": show_example}
         self._show("input", title, subtitle,
-                   "\u2191 / \u2193 : Move     \u2190 / \u2192 : Switch Column     Y : Confirm     X : Back", actions)
+                   "\u2191 / \u2193 : Move     \u2190 / \u2192 : Switch Column     Y : Confirm", actions)
         columns = tk.Frame(self.body, bg=BG)
         columns.pack()
         example_button = self._button("Task Example", "example", columns)
-        example_button.pack(side="left", padx=(0, 50))
-        letter_column, modality_column = tk.Frame(columns, bg=BG), tk.Frame(columns, bg=BG)
-        letter_column.pack(side="left", padx=(0, 40))
+        example_button.pack(side="left", padx=(0, 60))
+        modality_column = tk.Frame(columns, bg=BG)
         modality_column.pack(side="left")
-        letter_rows, modality_rows = [], []
-        for i in range(len(letters)):
-            label = tk.Label(letter_column, font=(self.font, 24), anchor="w", padx=24, pady=10, width=14,
-                             highlightthickness=2, cursor="hand2")
-            label.pack(pady=5)
-            label.bind("<Button-1>", lambda event, i=i: choose_letter(i))
-            letter_rows.append(label)
+        rows = []
         for m in range(len(modalities)):
-            label = tk.Label(modality_column, font=(self.font, 24), anchor="w", padx=24, pady=10, width=20,
+            label = tk.Label(modality_column, font=(self.font, 24), anchor="w", padx=24, pady=10, width=24,
                              highlightthickness=2, cursor="hand2")
             label.pack(pady=5)
             label.bind("<Button-1>", lambda event, m=m: click_modality(m))
             label.bind("<Double-Button-1>", lambda event: confirm())
-            modality_rows.append(label)
+            rows.append(label)
         refresh()
+        self._waiting = True
+
+    def _roll_screen(self, title, subtitle, done, total):
+        """One button that draws the next error scenario; X goes back to the modality selection."""
+        actions = {"confirm": lambda: self._answer(True), "yes": lambda: self._answer(True),
+                   "no": lambda: self._answer(None), "cancel": lambda: self._answer(None)}
+        self._show("input", title, subtitle, "Y : Roll Next Scenario     X : Back", actions)
+        self._text(f"Scenarios completed: {done} / {total}")
+        button = self._button("Roll Next Scenario", "confirm")
+        button.configure(font=(self.font, 30, "bold"), pady=30)
+        button.pack(pady=30)
+        self._highlight(button, True)
+        self._waiting = True
+
+    def _notice_screen(self, title, text):
+        actions = {"confirm": lambda: self._answer(True), "yes": lambda: self._answer(True)}
+        self._show("input", title, "", "Y : OK", actions)
+        self._text(text)
+        button = self._button("OK", "confirm")
+        button.configure(width=6)
+        button.pack(pady=30)
+        self._highlight(button, True)
         self._waiting = True
 
     def _example_screen(self, task_title, example, back):

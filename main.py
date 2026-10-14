@@ -1,16 +1,19 @@
 """Experiment GUI: run a saved task and record physical, language or multimodal corrections.
 
-Flow: connect -> home -> user ID -> (select task) -> select error scenario (A-D) and modality -> home -> instructions
-      -> START: execute -> START: correction -> START: finish -> (speech to text) -> save? -> home -> select ...
+Flow: connect -> home -> user ID -> (select task) -> select modality -> roll next scenario -> home -> instructions
+      -> START: execute -> START: correction -> START: finish -> (speech to text) -> save? -> home -> roll next ...
+A modality is done once each error scenario (A-D) has a correction with it, run in random order (each roll draws
+one of the scenarios still open); then the participant is asked to fill out the survey and chooses the next modality.
 The user ID gives the participant's task (1, 4, 7, ... = the first task of EXPERIMENT_TASKS, 2, 5, 8, ... the
 second, 3, 6, 9, ... the third), so the task selection is skipped; only user ID 0 chooses among all tasks.
 Correction: physical = guide the robot; language = the robot stands still while the microphone records;
 multimodal = guide the robot while the microphone records.
-Participants see only the high-level tasks and scenario letters (EXPERIMENT_TASKS in config.py); the error
-names stay internal. A task/scenario/modality is completed once its correction is saved (this session only);
-completed ones, scenarios with all modalities completed and tasks with all scenarios completed cannot be selected.
+Participants see only the high-level task (EXPERIMENT_TASKS in config.py); the scenarios stay internal. A
+scenario counts as done for a modality once its correction is saved (this session only), so one without a saved
+correction can be drawn again; completed modalities and tasks cannot be selected.
 """
 
+import random
 import time
 
 from mumoco.config import EXPERIMENT_TASKS, MODALITY_NAMES
@@ -124,13 +127,16 @@ def experiment(ui):
         assigned = titles[(int(user) - 1) % len(titles)] if int(user) else None
         print(f"[INFO] User ID: {user} ({assigned or 'all tasks'})")
 
-        def implemented(title):                          # letter -> error, for scenarios with a task file
+        def scenarios(title):                            # letter -> error, for scenarios with a task file
             short, errors = EXPERIMENT_TASKS[title]
             return {letter: error for letter, error in errors.items() if error and find_task_path(f"{short}_{error}")}
 
-        def task_done(title):
+        def modality_done(title, modality):
             short = EXPERIMENT_TASKS[title][0]
-            return all((short, error, m) in completed for error in implemented(title).values() for m in MODALITIES)
+            return all((short, error, modality) in completed for error in scenarios(title).values())
+
+        def task_done(title):
+            return all(modality_done(title, m) for m in MODALITIES)
 
         while True:
             done = [i for i, title in enumerate(titles) if task_done(title)]
@@ -138,29 +144,35 @@ def experiment(ui):
                 ui.status("All Tasks Completed", "Thank you for participating!")
                 return
             title = assigned or titles[ui.choose("Select Task", titles, completed=done)]
-            short, errors = EXPERIMENT_TASKS[title]
-            letters, ready = list(errors), implemented(title)
-            choice = ui.choose_scenario(
-                "Choose Error Scenario\nand Correction Modality", title, letters,
-                [MODALITY_NAMES[m] for m in MODALITIES],
-                unavailable=[i for i, letter in enumerate(letters) if letter not in ready],
-                completed=[(i, j) for i, letter in enumerate(letters) for j, m in enumerate(MODALITIES)
-                           if (short, errors[letter], m) in completed],
-                example=f"{short}_answer")
+            short = EXPERIMENT_TASKS[title][0]
+            choice = ui.choose_modality("Choose Correction Modality", title, [MODALITY_NAMES[m] for m in MODALITIES],
+                                        completed=[j for j, m in enumerate(MODALITIES) if modality_done(title, m)],
+                                        example=f"{short}_answer")
             if choice is None:
                 continue
-            letter, modality = letters[choice[0]], MODALITIES[choice[1]]
-            error = errors[letter]
-            task = load_task(find_task_path(f"{short}_{error}"))
-            print(f"[INFO] {title}, scenario {letter} = {task['name']}, {MODALITY_NAMES[modality]}")
-            ui.status("Preparing Task", "Returning to home position...", "moving")
-            robot.go_home()
-            ui.wait_for_start("Instructions", INSTRUCTIONS[MODALITY_NAMES[modality]].format(task=title))
-            result, saved = correct_task(robot, task, ui, user, modality, mic, transcriber, title)
-            if saved:
-                completed.add((short, error, modality))
-            ui.status(result, "Returning to home position...", "moving")
-            robot.go_home()
+            modality = MODALITIES[choice]
+            name = MODALITY_NAMES[modality]
+            while True:                                  # every scenario once with this modality, in random order
+                ready = scenarios(title)
+                remaining = [letter for letter, error in ready.items() if (short, error, modality) not in completed]
+                if not remaining:
+                    ui.notify(f"{name} Completed", "You have completed all scenarios with this correction modality.\n\n"
+                                                   "Please fill out the survey.")
+                    break
+                if ui.roll_scenario(name, title, len(ready) - len(remaining), len(ready)) is None:
+                    break
+                letter = random.choice(remaining)
+                error = ready[letter]
+                task = load_task(find_task_path(f"{short}_{error}"))
+                print(f"[INFO] {title}, {name}: scenario {letter} = {task['name']} (drawn from {', '.join(remaining)})")
+                ui.status("Preparing Task", "Returning to home position...", "moving")
+                robot.go_home()
+                ui.wait_for_start("Instructions", INSTRUCTIONS[name].format(task=title))
+                result, saved = correct_task(robot, task, ui, user, modality, mic, transcriber, title)
+                if saved:
+                    completed.add((short, error, modality))
+                ui.status(result, "Returning to home position...", "moving")
+                robot.go_home()
     finally:
         if mic:
             mic.close()
