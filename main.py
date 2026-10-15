@@ -5,7 +5,8 @@ Flow: connect -> home -> user ID -> (select task) -> select modality -> roll nex
 A modality is done once each error scenario (A-D) has a correction with it, run in random order (each roll draws
 one of the scenarios still open); then the participant is asked to fill out the survey and chooses the next modality.
 The user ID gives the participant's task (1, 4, 7, ... = the first task of EXPERIMENT_TASKS, 2, 5, 8, ... the
-second, 3, 6, 9, ... the third), so the task selection is skipped; only user ID 0 chooses among all tasks.
+second, 3, 6, 9, ... the third), so the task selection is skipped. User ID 0 (administrator) chooses the task
+and, instead of rolling, each scenario by its error name (e.g. "A: spill").
 Correction: physical = guide the robot; language = the robot stands still while the microphone records;
 multimodal = guide the robot while the microphone records.
 Participants see only the high-level task (EXPERIMENT_TASKS in config.py); the scenarios stay internal. A
@@ -159,12 +160,22 @@ def experiment(ui):
                     ui.notify(f"{name} Completed", "You have completed all scenarios with this correction modality.\n\n"
                                                    "Please fill out the survey.")
                     break
-                if ui.roll_scenario(name, title, len(ready) - len(remaining), len(ready)) is None:
-                    break
-                letter = random.choice(remaining)
+                if assigned:                             # participant: the next scenario is drawn at random
+                    if ui.roll_scenario(name, title, len(ready) - len(remaining), len(ready)) is None:
+                        break
+                    letter = random.choice(remaining)
+                else:                                    # user ID 0 (administrator): chooses the scenario by name
+                    letters = list(ready)
+                    pick = ui.choose("Choose Error Scenario", [f"{letter}: {ready[letter]}" for letter in letters],
+                                     back=True, subtitle=f"{title} \u2013 {name}",
+                                     completed=[i for i, letter in enumerate(letters) if letter not in remaining])
+                    if pick is None:
+                        break
+                    letter = letters[pick]
                 error = ready[letter]
                 task = load_task(find_task_path(f"{short}_{error}"))
-                print(f"[INFO] {title}, {name}: scenario {letter} = {task['name']} (drawn from {', '.join(remaining)})")
+                print(f"[INFO] {title}, {name}: scenario {letter} = {task['name']}"
+                      + (f" (drawn from {', '.join(remaining)})" if assigned else ""))
                 ui.status("Preparing Task", "Returning to home position...", "moving")
                 robot.go_home()
                 ui.wait_for_start("Instructions", INSTRUCTIONS[name].format(task=title))
