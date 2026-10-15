@@ -22,8 +22,8 @@
 !corrections/**/
 !corrections/**/*.json
 !corrections/**/*.wav
-!correction_video/
-!correction_video/*.mp4
+!correction_videos/
+!correction_videos/*.mp4
 !reference/
 !reference/*.py
 !reference/*.cpp
